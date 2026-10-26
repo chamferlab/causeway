@@ -46,7 +46,7 @@ function normalizeProject(p) {
   for (const key of ['evidence', 'ruledOut', 'solutions', 'actions']) s[key] = Array.isArray(p[key]) ? p[key] : [];
   s.nodes = p.nodes.filter(n => n?.id).map(n => ({...blankNode(n.kind in KINDS ? n.kind : 'condition', ''), ...n,
     kind: n.kind in KINDS ? n.kind : 'condition', status: n.status in STATUSES ? n.status : 'possible', test: typeof n.test === 'string' ? n.test : '',
-    offsetY: Number.isFinite(n.offsetY) ? n.offsetY : 0, causeType: n.causeType in CAUSE_TYPES ? n.causeType : '',
+    offsetY: Number.isFinite(n.offsetY) ? n.offsetY : 0, causeType: n.causeType in CAUSE_TYPES ? n.causeType : '', summary: n.summary === true,
     evidenceIds: Array.isArray(n.evidenceIds) ? n.evidenceIds : []}));
   if (!s.nodes.some(n => n.id === s.problem.primaryEffectId)) throw Error('The primary effect is missing.');
   s.meta.team = Array.isArray(s.meta.team) ? s.meta.team.filter(m => m?.id) : [];
@@ -122,7 +122,8 @@ function loadProject(data, handle = null) {
 // An .xmind file is a zip: XMind 8 keeps the map in content.xml, XMind 2020 and later in content.json.
 // The first sheet opens as a new, unsaved cause tree: the central topic is the primary effect and each
 // attached topic a possible cause, with its notes. A topic "Evidence: …" without subtopics becomes an
-// evidence item that its parent cites. Floating topics, relationships, markers, and styles are left out.
+// evidence item that its parent cites. A summary becomes a summary cause of the topics it spans.
+// Floating topics, relationships, markers, and styles are left out.
 
 const isZip = bytes => bytes[0] === 0x50 && bytes[1] === 0x4b;
 
@@ -147,11 +148,15 @@ async function zipText(buffer, name) {
   return null;
 }
 
-// The sheets of a map, each as its central topic: {title, notes, topics}.
+// The sheets of a map, each as its central topic: {title, notes, topics, summaries}. A summary is
+// {from, to, topic}: the first and last of the topics it spans, by index.
+const xmindRange = range => /^\((\d+),(\d+)\)$/.exec(String(range || '').replace(/\s/g, ''));
 async function xmindSheets(buffer) {
   const json = await zipText(buffer, 'content.json');
   if (json !== null) {
-    const topic = t => ({title: t?.title || '', notes: t?.notes?.plain?.content || '', topics: (t?.children?.attached || []).map(topic)});
+    const topic = t => ({title: t?.title || '', notes: t?.notes?.plain?.content || '', topics: (t?.children?.attached || []).map(topic),
+      summaries: (t?.summaries || []).map(x => [xmindRange(x?.range), (t.children?.summary || []).find(st => st?.id === x?.topicId)])
+        .filter(([r, st]) => r && st).map(([r, st]) => ({from: +r[1], to: +r[2], topic: topic(st)}))});
     return (JSON.parse(json) || []).filter(sheet => sheet?.rootTopic).map(sheet => topic(sheet.rootTopic));
   }
   const xml = await zipText(buffer, 'content.xml');
@@ -159,8 +164,11 @@ async function xmindSheets(buffer) {
   const doc = new DOMParser().parseFromString(xml, 'application/xml');
   if (doc.querySelector('parsererror')) throw Error('The mind map could not be read.');
   const kids = (el, name) => [...el?.children || []].filter(c => c.localName === name);
+  const group = (t, type) => kids(kids(t, 'children')[0], 'topics').filter(g => g.getAttribute('type') === type).flatMap(g => kids(g, 'topic'));
   const topic = t => ({title: kids(t, 'title')[0]?.textContent || '', notes: kids(kids(t, 'notes')[0], 'plain')[0]?.textContent || '',
-    topics: kids(kids(t, 'children')[0], 'topics').filter(g => g.getAttribute('type') === 'attached').flatMap(g => kids(g, 'topic')).map(topic)});
+    topics: group(t, 'attached').map(topic),
+    summaries: kids(kids(t, 'summaries')[0], 'summary').map(x => [xmindRange(x.getAttribute('range')), group(t, 'summary').find(st => st.getAttribute('id') === x.getAttribute('topic-id'))])
+      .filter(([r, st]) => r && st).map(([r, st]) => ({from: +r[1], to: +r[2], topic: topic(st)}))});
   return kids(doc.documentElement, 'sheet').map(sheet => kids(sheet, 'topic')[0]).filter(Boolean).map(topic);
 }
 
@@ -176,7 +184,14 @@ function xmindProject(root) {
     const n = {...blankNode(parent ? 'cause' : 'effect', title), notes: t.notes.trim()};
     s.nodes.push(n);
     if (parent) s.links.push({id: uuid(), effectId: parent.id, causeId: n.id});
-    for (const kid of t.topics) add(kid, n);
+    const kids = t.topics.map(kid => add(kid, n));
+    // A summary hangs from the first topic it spans, and is linked from the others.
+    for (const sum of t.summaries) {
+      const members = kids.slice(sum.from, sum.to + 1).filter(Boolean), m = members.length && add(sum.topic, members[0]);
+      if (!m) continue;
+      for (const x of members.slice(1)) s.links.push({id: uuid(), effectId: x.id, causeId: m.id});
+      m.summary = members.length > 1;
+    }
     return n;
   };
   s.nodes = [];

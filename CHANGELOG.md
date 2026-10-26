@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.18 — 2026-10-26
+
+Box selection, and summaries.
+
+- **Drag a box** on the empty canvas to select several nodes; **Ctrl+click** adds or takes out one. Panning moves to the **right** or **middle** mouse button.
+- **Summary** (edit bar, or **Alt+G**): causes at the end of their branches, under one effect, get one new cause that they share, drawn to their right with a brace across them, as in a mind map. Confirming it confirms them.
+- With several selected, **Alt+1**, **Alt+2**, **Alt+3** set the status of them all, and **Del** deletes them all.
+- XMind summaries are imported as summaries.
+- A sideways wheel (such as a mouse's thumb wheel) or a sideways swipe pans left and right instead of zooming out.
+
 ## v1.17 — 2026-10-24
 
 Failed vs good: the failed case beside two that did not fail.

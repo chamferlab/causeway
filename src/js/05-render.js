@@ -29,7 +29,7 @@ function nodeMarkup(b, opts) {
   const issue = opts.issues?.get(n.id);
   let s = `<g class="node" data-id="${n.id}" transform="translate(${b.x} ${b.y})"${opts.dimmed?.has(n.id) || opts.highlight && !opts.highlight.has(n.id) || opts.dragging?.id === n.id ? ' opacity="0.35"' : ''}>`;
   if (opts.highlight?.has(n.id) && opts.selectedId !== n.id) s += `<rect x="-6" y="-6" width="${w + 12}" height="${h + 12}" rx="12" fill="none" stroke="${C.highlight}" stroke-width="4"/>`;
-  if (opts.selectedId === n.id) s += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="11" fill="none" stroke="${C.select}" stroke-width="3"/>`;
+  if (opts.selectedId === n.id || opts.picked?.has(n.id)) s += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="11" fill="none" stroke="${C.select}" stroke-width="3"/>`;
   else if (issue === 'error') s += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="11" fill="none" stroke="${C.issue}" stroke-width="2" stroke-dasharray="5 4"/>`;
   s += `<rect width="${w}" height="${h}" rx="8" ${attrs({fill: c.fill, stroke: c.stroke, 'stroke-width': c.dash || n.kind === 'condition' ? 1.5 : isPrimary ? 2 : 1, 'stroke-dasharray': c.dash})}/>`;
   const type = CAUSE_TYPES[n.causeType]?.tag;
@@ -75,7 +75,7 @@ function nodeMarkup(b, opts) {
   // A stop point closes the branch with a double bar on the right.
   if (n.stopPoint) s += `<path d="M ${w + 7} ${h * .25} V ${h * .75} M ${w + 12} ${h * .25} V ${h * .75}" stroke="${C.stop}" stroke-width="3"/>`;
   // On the canvas only: the collapse toggle where the node's connector leaves it.
-  if (opts.toggles && causeLinks(n.id).length) {
+  if (opts.toggles && causeLinks(n.id).length && !b.inSummary) {
     const open = !collapsed.has(n.id);
     s += `<g class="toggle" transform="translate(${w} ${h / 2})"><title>${open ? 'Collapse' : 'Expand'} this branch (Space)</title><circle r="8" fill="${C.panel}" stroke="${C.wire}" stroke-width="1.5"/><path d="M -3.5 0 H 3.5${open ? '' : ' M 0 -3.5 V 3.5'}" stroke="${C.stop}" stroke-width="1.6"/></g>`;
   }
@@ -101,7 +101,7 @@ function chartMarkup(l, opts = {}) {
   let s = `<g font-family="${escapeHtml(CHART_FONT)}">`;
   if (treeStyle()) s += treeEdges(l, C);
   else for (const e of l.edges) {
-    s += `<path class="edge" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${e.shared ? C.shared : C.wire}" stroke-width="1.6"${e.shared ? ' stroke-dasharray="6 4"' : ''}/>`;
+    s += `<path class="edge${e.summary ? ' brace' : ''}" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${e.shared ? C.shared : C.wire}" stroke-width="1.6"${e.shared ? ' stroke-dasharray="6 4"' : ''}/>`;
   }
   for (const e of l.edges) {
     if (!e.junction || treeStyle()) continue;
@@ -119,6 +119,13 @@ function treeEdges(l, C) {
   let s = '', bold = '';
   for (const e of l.edges) {
     if (e.shared) { s += `<path class="edge" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${C.shared}" stroke-width="1.6" stroke-dasharray="6 4"/>`; continue; }
+    // A summary's brace, drawn by the summary's status.
+    if (e.summary) {
+      const status = byId(e.summary)?.status;
+      if (status === 'confirmed') bold += `<path class="edge brace" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${C.confirmedWire}" stroke-width="2.6" stroke-linejoin="round"/>`;
+      else s += `<path class="edge brace" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${status === 'ruled-out' ? C.ruledWire : C.wire}" stroke-width="1.6"${status === 'ruled-out' ? ' stroke-dasharray="5 4"' : ''}/>`;
+      continue;
+    }
     const ys = e.branches.map(b => b.y);
     s += `<path class="edge" data-effect="${e.effectId}" d="M ${e.from.x} ${e.from.y} H ${e.bx} M ${e.bx} ${Math.min(e.from.y, ...ys)} V ${Math.max(e.from.y, ...ys)}" fill="none" stroke="${C.wire}" stroke-width="1.6"/>`;
     for (const b of e.branches) {
@@ -167,13 +174,20 @@ function renderCanvas() {
   const cannot = !linking ? null : linking.mode === 'move' ? n => n.id === linking.causeId || moveProblem(linking.causeId, linking.fromId, n.id) : n => linkProblem(linking.effectId, n.id);
   const dimmed = cannot ? new Set(state.nodes.filter(cannot).map(n => n.id)) : null;
   const lit = highlight && !linking ? new Set(citingNodes(highlight).map(n => n.id)) : null;
-  svg.innerHTML = chartMarkup(layout, {colors: darkTheme() ? CHART_COLORS_DARK : CHART_COLORS, selectedId: linking ? linking.effectId ?? linking.causeId : selected, issues: issueMap(ruleIssues()), dimmed, highlight: lit, toggles: true, dragging: nodeDrag?.moved ? nodeDrag : null});
+  svg.innerHTML = chartMarkup(layout, {colors: darkTheme() ? CHART_COLORS_DARK : CHART_COLORS, selectedId: linking ? linking.effectId ?? linking.causeId : drag?.hits ? null : selected, picked: linking ? null : drag?.hits ? new Set(drag.hits) : picked, issues: issueMap(ruleIssues()), dimmed, highlight: lit, toggles: true, dragging: nodeDrag?.moved ? nodeDrag : null});
+  // The selection box being drawn.
+  if (drag?.to) {
+    const a = drag.from, b = drag.to, C = darkTheme() ? CHART_COLORS_DARK : CHART_COLORS;
+    svg.insertAdjacentHTML('beforeend', `<rect class="marquee" x="${Math.min(a.x, b.x)}" y="${Math.min(a.y, b.y)}" width="${Math.abs(a.x - b.x)}" height="${Math.abs(a.y - b.y)}" fill="${C.select}" fill-opacity="0.08" stroke="${C.select}" stroke-width="${1.2 / view.k}" stroke-dasharray="${4 / view.k} ${3 / view.k}" pointer-events="none"/>`);
+  }
   svg.classList.toggle('linking', !!linking);
   $('zoomReset').textContent = `${Math.round(view.k * 100)}%`;
 }
 function render() {
   layout = computeLayout();
   if (selected && !layout.boxes.has(selected)) selected = null;
+  picked = new Set([...picked].filter(id => layout.boxes.has(id)));
+  if (picked.size < 2 || !picked.has(selected)) picked.clear();
   if (highlight && !evidenceById(highlight)) highlight = null;
   const issues = ruleIssues(), causes = state.nodes.length - 1;
   $('count').textContent = `${causes} cause${causes === 1 ? '' : 's'} · ${state.evidence.length} evidence item${state.evidence.length === 1 ? '' : 's'}`;
@@ -187,8 +201,9 @@ function render() {
   renderCanvas();
   const n = byId(selected);
   $('addAction').disabled = $('addCondition').disabled = !n;
-  $('deleteNode').disabled = !n || n.id === state.problem.primaryEffectId;
-  $('linkCause').disabled = !n;
+  $('deleteNode').disabled = !selection().some(id => id !== state.problem.primaryEffectId);
+  $('linkCause').disabled = !n || picked.size > 1;
+  $('summarise').disabled = !!summaryProblem(selection(), layout.parent.get(selected));
   $('linkBanner').hidden = !linking;
   if (linking) $('linkText').innerHTML = linking.mode === 'move'
     ? `Click the effect to move <b>${escapeHtml(byId(linking.causeId)?.title || '')}</b> under. Faded nodes would make a loop or already have it as a cause.`
@@ -214,8 +229,8 @@ function renderStyle() {
   $('addActionName').textContent = tree ? '+ Cause' : '+ Action';
   $('addAction').title = tree ? 'Add a possible cause to the selected effect' : 'Add an action cause to the selected effect';
   $('keyHints').innerHTML = tree
-    ? 'Type to rename · <kbd>Ins</kbd> cause · <kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd> status · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete'
-    : 'Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete';
+    ? 'Type to rename · <kbd>Ins</kbd> cause · <kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd> status · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete'
+    : 'Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete';
 }
 
 function renderTitle() {

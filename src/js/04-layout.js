@@ -99,6 +99,21 @@ function computeLayout() {
   const order = {action: 0, condition: 1, cause: 2, effect: 3};
   if (!treeStyle()) for (const list of children.values()) list.sort((a, b) => order[a.kind] - order[b.kind]);
 
+  // Summaries drawn as such: {id, members}, the causes it is the only cause of, neighbours under one
+  // effect, in their order. The summary is taken out of its first member's causes, and is placed with them.
+  const summaries = [];
+  for (const n of state.nodes) {
+    if (!n.summary || !visible.has(n.id) || !parent.has(n.id)) continue;
+    const from = links.filter(l => l.causeId === n.id).map(l => l.effectId), effectId = parent.get(from[0]);
+    if (from.length < 2 || from.some(id => parent.get(id) !== effectId || links.some(l => l.effectId === id && l.causeId !== n.id))) continue;
+    const kids = children.get(effectId).map(k => k.id), at = from.map(id => kids.indexOf(id)).sort((a, b) => a - b);
+    if (at.some((x, i) => x !== at[0] + i)) continue;
+    summaries.push({id: n.id, members: kids.slice(at[0], at[0] + from.length)});
+    const list = children.get(parent.get(n.id));
+    list.splice(list.findIndex(k => k.id === n.id), 1);
+  }
+  const summaryAt = new Map(summaries.map(x => [x.members[0], x])), inSummary = new Set(summaries.flatMap(x => x.members));
+
   // Hidden causes under a collapsed node, for its "+N" tag.
   const hiddenCount = id => {
     if (!collapsed.has(id)) return 0;
@@ -113,18 +128,26 @@ function computeLayout() {
   };
   const sizes = new Map([...visible].map(id => [id, nodeSize(byId(id), hiddenCount(id))]));
 
-  // Contour packing. A subtree is {contour: [[top, bottom] per column depth], members: [[id, top]]}
-  // in coordinates relative to the subtree. With `hand`, causes are moved by hand; without, the
+  // Contour packing. A subtree is {contour: [[top, bottom] per column depth], members: [[id, top]],
+  // centers: [first, last]} in coordinates relative to the subtree; centers are those of the boxes its
+  // effect is centred between. With `hand`, causes are moved by hand; without, the
   // result places each effect, centred on its causes as they would be without hand moves.
   const plain = new Map();
   function subtree(id, hand) {
     if (!hand && plain.has(id)) return plain.get(id);
     const h = sizes.get(id).h, kids = children.get(id) || [];
-    if (!kids.length) return {contour: [[0, h]], members: [[id, 0]]};
+    if (!kids.length) return {contour: [[0, h]], members: [[id, 0]], centers: [h / 2, h / 2]};
+    // A summary's members go together, as one unit with the summary.
+    const units = [];
+    for (let i = 0; i < kids.length; i++) {
+      const sum = summaryAt.get(kids[i].id);
+      units.push(sum ? {sum} : {kid: kids[i]});
+      if (sum) i += sum.members.length - 1;
+    }
     const acc = [], members = [], offsets = [];
     let firstCenter = null, lastCenter = null;
-    for (const [i, kid] of kids.entries()) {
-      const t = subtree(kid.id, hand);
+    for (const [i, {kid, sum}] of units.entries()) {
+      const t = sum ? summaryTree(sum, hand) : subtree(kid.id, hand);
       // Packed below the causes before it; the first has nothing above it, except by hand.
       let offset = hand ? -Infinity : 0;
       if (members.length) {
@@ -134,20 +157,29 @@ function computeLayout() {
       }
       // By hand, a cause goes where it would be without hand moves, moved by its offset, unless the
       // causes above it need the room.
-      if (hand) offset = Math.max(offset, subtree(id, false).offsets[i] + (kid.offsetY || 0));
+      if (hand) offset = Math.max(offset, subtree(id, false).offsets[i] + (kid?.offsetY || 0));
       offsets.push(offset);
       t.contour.forEach(([top, bottom], d) => {
         acc[d] = acc[d] ? [Math.min(acc[d][0], top + offset), Math.max(acc[d][1], bottom + offset)] : [top + offset, bottom + offset];
       });
       for (const [m, y] of t.members) members.push([m, y + offset]);
-      // The kid's box is the first member, not necessarily at the top of its subtree.
-      const center = offset + t.members[0][1] + sizes.get(kid.id).h / 2;
-      firstCenter ??= center; lastCenter = center;
+      firstCenter ??= offset + t.centers[0]; lastCenter = offset + t.centers[1];
     }
     const top = hand ? subtree(id, false).members[0][1] : (firstCenter + lastCenter) / 2 - h / 2;
-    const result = {contour: [[top, top + h], ...acc], members: [[id, top], ...members], offsets};
+    const result = {contour: [[top, top + h], ...acc], members: [[id, top], ...members], offsets, centers: [top + h / 2, top + h / 2]};
     if (!hand) plain.set(id, result);
     return result;
+  }
+
+  // A summary's members, one below the other, and the summary's branch in the next column, its box
+  // centred on them.
+  function summaryTree(sum, hand) {
+    const members = [];
+    let y = 0;
+    for (const m of sum.members) { members.push([m, y]); y += sizes.get(m).h + SIBLING_GAP; }
+    const bottom = y - SIBLING_GAP, t = subtree(sum.id, hand), off = bottom / 2 - t.members[0][1] - sizes.get(sum.id).h / 2;
+    return {contour: [[0, bottom], ...t.contour.map(([a, b]) => [a + off, b + off])], members: [...members, ...t.members.map(([m, my]) => [m, my + off])],
+      centers: [sizes.get(sum.members[0]).h / 2, bottom - sizes.get(sum.members.at(-1)).h / 2]};
   }
 
   // Each tree is placed below the last, its top where it would be without hand moves, so that a
@@ -160,22 +192,32 @@ function computeLayout() {
     const origin = bottom === null ? 0 : bottom + SUBTREE_GAP * 2 - (Math.min(...t.contour.map(c => c[0])) - top);
     for (const [id, y] of t.members) {
       const size = sizes.get(id);
-      boxes.set(id, {id, node: byId(id), x: rank.get(id) * (NODE_W + COL_GAP), y: y - top + origin, ...size});
+      boxes.set(id, {id, node: byId(id), x: rank.get(id) * (NODE_W + COL_GAP), y: y - top + origin, inSummary: inSummary.has(id), ...size});
     }
     bottom = origin + Math.max(...t.contour.map(c => c[1])) - top;
   }
 
   const placed = links.filter(l => boxes.has(l.effectId) && boxes.has(l.causeId));
   // parent and children: the effect each cause is drawn under, and each effect's causes in drawing order.
-  return {boxes, edges: routeEdges(boxes, placed, parent, rank), bounds: chartBounds(boxes), parent, children};
+  // summaries: those drawn with a brace.
+  return {boxes, edges: routeEdges(boxes, placed, parent, rank, summaries), bounds: chartBounds(boxes), parent, children, summaries};
 }
 
 // ---- Connectors ----
 
 const midY = b => b.y + b.h / 2;
 
-function routeEdges(boxes, links, parent, rank) {
-  const edges = [];
+function routeEdges(boxes, links, parent, rank, summaries) {
+  const edges = [], braced = new Set(summaries.map(x => x.id));
+  // A summary: a brace across its members, from just right of them, pointing at it.
+  for (const sum of summaries) {
+    const first = boxes.get(sum.members[0]), last = boxes.get(sum.members.at(-1)), b = boxes.get(sum.id);
+    if (!first || !last || !b) continue;
+    const x = first.x + first.w + 14, r = 8, t = first.y, bt = last.y + last.h, y = midY(b);
+    const d = `M ${x} ${t} Q ${x + r} ${t} ${x + r} ${t + r} V ${y - r} Q ${x + r} ${y} ${x + 2 * r} ${y} Q ${x + r} ${y} ${x + r} ${y + r} V ${bt - r} Q ${x + r} ${bt} ${x} ${bt} M ${x + 2 * r} ${y} H ${b.x}`;
+    edges.push({d, shared: false, summary: sum.id, effectId: sum.members[0], linkIds: links.filter(l => l.causeId === sum.id).map(l => l.id)});
+  }
+  links = links.filter(l => !braced.has(l.causeId));
   // Tree links: each effect has a bracket in the gap to its right, joining all its causes.
   const groups = new Map();
   for (const l of links) {

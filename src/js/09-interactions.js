@@ -8,18 +8,23 @@ function point(e) {
 }
 
 function select(id) {
-  selected = id;
+  selected = id; picked.clear();
   if (id && reveal(id)) autosave();
   render();
 }
 
 const capture = e => { try { svg.setPointerCapture(e.pointerId); } catch {} };
 
+// On the empty canvas, a left drag draws a box that selects the nodes it touches; a right or middle
+// drag, or a finger, pans. While linking, a left drag pans too.
 svg.addEventListener('pointerdown', e => {
+  if (e.button === 1 || e.button === 2) { e.preventDefault(); drag = {x: e.clientX, y: e.clientY, view: {...view}, moved: false, pan: true}; capture(e); return; }
   if (e.button !== 0) return;
   const node = e.target.closest('.node');
   if (node && linking) { pickNode(node.dataset.id); return; }
-  if (node && e.target.closest('.toggle')) { selected = node.dataset.id; toggleCollapse(); return; }
+  if (node && e.target.closest('.toggle')) { select(node.dataset.id); toggleCollapse(); return; }
+  // Ctrl+click (Cmd+click) adds the node to the selection or takes it out.
+  if (node && (e.ctrlKey || e.metaKey)) { togglePicked(node.dataset.id); return; }
   if (node) {
     const id = node.dataset.id, b = layout.boxes.get(id), p = point(e);
     select(id);
@@ -29,9 +34,16 @@ svg.addEventListener('pointerdown', e => {
     if (b && layout.parent.has(id)) { nodeDrag = {id, from: layout.parent.get(id), start: {x: e.clientX, y: e.clientY}, moved: false}; capture(e); }
     return;
   }
-  drag = {x: e.clientX, y: e.clientY, view: {...view}, moved: false};
+  drag = {x: e.clientX, y: e.clientY, view: {...view}, moved: false, pan: !!linking || e.pointerType === 'touch', from: point(e)};
   capture(e);
 });
+svg.addEventListener('contextmenu', e => e.preventDefault());
+
+// The nodes a selection box from chart point a to b touches, in drawing order.
+function boxedNodes(a, b) {
+  const l = Math.min(a.x, b.x), r = Math.max(a.x, b.x), t = Math.min(a.y, b.y), bt = Math.max(a.y, b.y);
+  return [...layout.boxes.values()].filter(x => x.x <= r && x.x + x.w >= l && x.y <= bt && x.y + x.h >= t).map(x => x.id);
+}
 svg.addEventListener('pointermove', e => {
   if (nodeShift) { moveShift(e); return; }
   if (nodeDrag) {
@@ -47,6 +59,12 @@ svg.addEventListener('pointermove', e => {
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
   if (!drag.moved && Math.hypot(dx, dy) < 4) return;
   drag.moved = true;
+  if (!drag.pan) {
+    drag.to = point(e);
+    drag.hits = boxedNodes(drag.from, drag.to);
+    renderCanvas();
+    return;
+  }
   svg.classList.add('panning');
   view.x = drag.view.x - dx / view.k; view.y = drag.view.y - dy / view.k;
   renderCanvas();
@@ -54,12 +72,13 @@ svg.addEventListener('pointermove', e => {
 svg.addEventListener('pointerup', () => {
   if (nodeShift) { finishShift(); return; }
   if (nodeDrag) { finishNodeDrag(); return; }
+  if (drag?.moved && !drag.pan) { const hits = drag.hits; drag = null; highlight = null; selectMany(hits); return; }
   if (drag && !drag.moved && linking) cancelLinking();
-  else if (drag && !drag.moved && (selected || highlight)) { highlight = null; select(null); }
+  else if (drag && !drag.moved && (selected || picked.size || highlight)) { highlight = null; select(null); }
   drag = null;
   svg.classList.remove('panning');
 });
-svg.addEventListener('pointercancel', () => { cancelNodeDrag(); cancelShift(); });
+svg.addEventListener('pointercancel', () => { cancelNodeDrag(); cancelShift(); if (drag) { drag = null; svg.classList.remove('panning'); renderCanvas(); } });
 
 // What dropping the dragged node at chart point p would do. On a sibling's top or bottom 30 %, or in
 // the gap next to it, it is placed above or below that sibling (siblings of its group only);
@@ -154,7 +173,14 @@ function zoomToFit() {
   view.y = (b.t + b.b) / 2 - height / view.k / 2;
   renderCanvas();
 }
-svg.addEventListener('wheel', e => { e.preventDefault(); zoom(e.deltaY < 0 ? 1.12 : 1 / 1.12, point(e)); }, {passive: false});
+// The wheel zooms; a sideways wheel or swipe (the thumb wheel of some mice) pans left and right.
+svg.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+    view.x += e.deltaX * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? svg.clientWidth : 1) / view.k;
+    renderCanvas();
+  } else if (e.deltaY) zoom(e.deltaY < 0 ? 1.12 : 1 / 1.12, point(e));
+}, {passive: false});
 $('zoomIn').onclick = () => zoom(1.25);
 $('zoomOut').onclick = () => zoom(.8);
 $('zoomReset').onclick = () => zoom(1 / view.k);
@@ -195,6 +221,7 @@ window.addEventListener('keydown', e => {
     else if (status) { e.preventDefault(); setNodeStatus(status); }
     else if (code === 'l' && !e.shiftKey) { e.preventDefault(); startLinking(); }
     else if (code === 'm' && !e.shiftKey) { e.preventDefault(); startMoving(); }
+    else if (code === 'g' && !e.shiftKey) { e.preventDefault(); summariseSelected(); }
     return;
   }
   // Insert adds an action and Shift+Insert a condition; in a cause tree, Insert adds a cause.

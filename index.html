@@ -879,6 +879,7 @@ textarea.answer { font-size: 14px; font-weight: 600; min-height: 32px; resize: n
       <button id="addAction" class="add-action" title="Add an action cause to the selected effect"><span id="addActionName">+ Action</span> <kbd>Ins</kbd></button>
       <button id="addCondition" class="add-condition" title="Add a condition cause to the selected effect">+ Condition <kbd>Shift+Ins</kbd></button>
       <button id="linkCause" title="Link a node already on the chart as a further cause of the selected effect">Link cause <kbd>Alt+L</kbd></button>
+      <button id="summarise" title="One new cause shared by the selected causes, drawn to their right with a brace. Drag a box on the canvas to select several">Summary <kbd>Alt+G</kbd></button>
       <button id="deleteNode" class="danger" title="Delete the selected cause">Delete <kbd>Del</kbd></button>
       <span class="sep" aria-hidden="true"></span>
       <button id="zoomOut" title="Zoom out" aria-label="Zoom out">−</button>
@@ -897,7 +898,7 @@ textarea.answer { font-size: 14px; font-weight: 600; min-height: 32px; resize: n
   <footer>
     <span id="status">Ready</span>
     <span id="count">0 causes · 0 evidence items</span>
-    <span class="keyhints" id="keyHints">Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete</span>
+    <span class="keyhints" id="keyHints">Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete</span>
   </footer>
 </div>
 <dialog id="dialog" class="dialog"></dialog>
@@ -1147,11 +1148,11 @@ function uuid() {
 const today = () => new Date().toISOString().slice(0, 10);
 
 // status is used in a cause tree; test, how the cause is or was tested, in both styles. causeType: a
-// key of CAUSE_TYPES, or ''. offsetY: how far
+// key of CAUSE_TYPES, or ''. summary: drawn as the summary of its effects (see summariseCauses). offsetY: how far
 // the node is moved down by hand (negative: up) from where the layout puts it.
 const blankNode = (kind, title) => ({
   id: uuid(), kind, title, description: '', evidenceIds: [], status: 'possible', test: '',
-  unverified: false, controllable: false, causeType: '', stopPoint: null, notes: '', offsetY: 0,
+  unverified: false, controllable: false, causeType: '', summary: false, stopPoint: null, notes: '', offsetY: 0,
 });
 
 const blankSignoff = () => Object.fromEntries(Object.keys(SIGNOFF_ROLES).map(k => [k, {name: '', date: ''}]));
@@ -1173,6 +1174,7 @@ function blankState(style = 'apollo') {
 
 let state = blankState();
 let selected = null;           // node id
+let picked = new Set();        // with Ctrl+click, the nodes selected together, `selected` among them
 let collapsed = new Set();     // node ids whose causes are hidden; view state, not undoable
 let view = {x: 0, y: 0, k: 1}; // chart point at the top-left of the canvas, and pixels per unit
 let drag = null;               // the pointer gesture in progress
@@ -1189,7 +1191,7 @@ const evidenceById = id => state.evidence.find(e => e.id === id);
 const treeStyle = () => state.meta.style === 'tree';
 
 function resetInteraction() {
-  selected = null; drag = null; nodeDrag = null; nodeShift = null; linking = null; highlight = null;
+  selected = null; picked.clear(); drag = null; nodeDrag = null; nodeShift = null; linking = null; highlight = null;
 }
 
 // The file and the autosave hold the RCA and the collapsed branches.
@@ -1352,7 +1354,7 @@ function pasteBranchData(data, effectId) {
     const text = key => typeof n[key] === 'string' ? n[key] : '';
     state.nodes.push({...blankNode(kind, text('title')), id: ids.get(old),
       description: text('description'), test: text('test'), notes: text('notes'), evidenceIds: kept,
-      status: n.status in STATUSES ? n.status : 'possible', unverified: n.unverified === true, controllable: n.controllable === true, causeType: n.causeType in CAUSE_TYPES ? n.causeType : '',
+      status: n.status in STATUSES ? n.status : 'possible', unverified: n.unverified === true, controllable: n.controllable === true, causeType: n.causeType in CAUSE_TYPES ? n.causeType : '', summary: n.summary === true,
       stopPoint: n.stopPoint && n.stopPoint.reason in STOP_REASONS ? {reason: n.stopPoint.reason, note: typeof n.stopPoint.note === 'string' ? n.stopPoint.note : ''} : null,
       offsetY: old !== data.rootId && Number.isFinite(n.offsetY) ? n.offsetY : 0});
   }
@@ -1573,13 +1575,13 @@ function reachable(links = state.links) {
   return seen;
 }
 
-// Deleting a node also deletes the causes that only it supported. Returns their ids,
-// the node itself first, without changing anything.
-function deletionSet(id) {
-  if (id === state.problem.primaryEffectId) return [];
-  const remaining = state.links.filter(l => l.effectId !== id && l.causeId !== id);
+// Deleting nodes also deletes the causes that only they supported. Returns their ids,
+// the nodes themselves first, without changing anything.
+function deletionSet(...ids) {
+  ids = ids.filter(id => id !== state.problem.primaryEffectId);
+  const gone = new Set(ids), remaining = state.links.filter(l => !gone.has(l.effectId) && !gone.has(l.causeId));
   const keep = reachable(remaining);
-  return [id, ...state.nodes.filter(n => n.id !== id && !keep.has(n.id)).map(n => n.id)];
+  return ids.length ? [...ids, ...state.nodes.filter(n => !gone.has(n.id) && !keep.has(n.id)).map(n => n.id)] : [];
 }
 function deleteNodes(ids) {
   const gone = new Set(ids);
@@ -1641,6 +1643,36 @@ function placeCause(effectId, causeId, siblingId, after) {
   state.links.splice(state.links.indexOf(link), 1);
   state.links.splice(state.links.indexOf(anchor) + (after ? 1 : 0), 0, link);
   byId(causeId).offsetY = 0;
+}
+
+// ---- Summaries ----
+// Causes at the end of their branches, under one effect, can share one deeper cause: a summary. It is
+// an ordinary cause, linked as a cause of each of them, drawn once to their right with a brace across
+// them instead of a link from each. It stays drawn so while they are neighbours under one effect and
+// it is their only cause; otherwise its links are drawn as a shared cause's.
+
+// Why the causes cannot be summarised, or null when they can. Returns their effect with `effect`.
+function summaryEffect(ids, prefer) {
+  if (ids.length < 2 || ids.includes(state.problem.primaryEffectId)) return null;
+  const common = ids.map(id => new Set(effectLinks(id).map(l => l.effectId))).reduce((a, b) => new Set([...a].filter(id => b.has(id))));
+  return common.has(prefer) ? prefer : [...common][0] ?? null;
+}
+function summaryProblem(ids, prefer) {
+  if (ids.length < 2) return 'Select two or more causes to summarise: drag a box around them.';
+  if (ids.includes(state.problem.primaryEffectId)) return 'The primary effect cannot be summarised.';
+  if (ids.some(id => causeLinks(id).length)) return 'Only causes at the end of a branch can be summarised: these have causes of their own.';
+  return summaryEffect(ids, prefer) ? null : 'Only causes of the same effect can be summarised.';
+}
+// The new cause goes under each of them. Their links are put together, where the first of them is.
+function summariseCauses(ids, effectId) {
+  const members = new Set(ids), links = state.links.filter(l => l.effectId === effectId && members.has(l.causeId));
+  const at = state.links.indexOf(links[0]);
+  state.links = state.links.filter(l => !links.includes(l));
+  state.links.splice(at, 0, ...links);
+  const n = {...blankNode('cause', 'New cause'), summary: true};
+  state.nodes.push(n);
+  for (const l of links) { addLink(l.causeId, n.id); byId(l.causeId).offsetY = 0; collapsed.delete(l.causeId); }
+  return n;
 }
 
 // Expands every collapsed branch that hides the node. Returns whether anything changed.
@@ -1998,6 +2030,21 @@ function computeLayout() {
   const order = {action: 0, condition: 1, cause: 2, effect: 3};
   if (!treeStyle()) for (const list of children.values()) list.sort((a, b) => order[a.kind] - order[b.kind]);
 
+  // Summaries drawn as such: {id, members}, the causes it is the only cause of, neighbours under one
+  // effect, in their order. The summary is taken out of its first member's causes, and is placed with them.
+  const summaries = [];
+  for (const n of state.nodes) {
+    if (!n.summary || !visible.has(n.id) || !parent.has(n.id)) continue;
+    const from = links.filter(l => l.causeId === n.id).map(l => l.effectId), effectId = parent.get(from[0]);
+    if (from.length < 2 || from.some(id => parent.get(id) !== effectId || links.some(l => l.effectId === id && l.causeId !== n.id))) continue;
+    const kids = children.get(effectId).map(k => k.id), at = from.map(id => kids.indexOf(id)).sort((a, b) => a - b);
+    if (at.some((x, i) => x !== at[0] + i)) continue;
+    summaries.push({id: n.id, members: kids.slice(at[0], at[0] + from.length)});
+    const list = children.get(parent.get(n.id));
+    list.splice(list.findIndex(k => k.id === n.id), 1);
+  }
+  const summaryAt = new Map(summaries.map(x => [x.members[0], x])), inSummary = new Set(summaries.flatMap(x => x.members));
+
   // Hidden causes under a collapsed node, for its "+N" tag.
   const hiddenCount = id => {
     if (!collapsed.has(id)) return 0;
@@ -2012,18 +2059,26 @@ function computeLayout() {
   };
   const sizes = new Map([...visible].map(id => [id, nodeSize(byId(id), hiddenCount(id))]));
 
-  // Contour packing. A subtree is {contour: [[top, bottom] per column depth], members: [[id, top]]}
-  // in coordinates relative to the subtree. With `hand`, causes are moved by hand; without, the
+  // Contour packing. A subtree is {contour: [[top, bottom] per column depth], members: [[id, top]],
+  // centers: [first, last]} in coordinates relative to the subtree; centers are those of the boxes its
+  // effect is centred between. With `hand`, causes are moved by hand; without, the
   // result places each effect, centred on its causes as they would be without hand moves.
   const plain = new Map();
   function subtree(id, hand) {
     if (!hand && plain.has(id)) return plain.get(id);
     const h = sizes.get(id).h, kids = children.get(id) || [];
-    if (!kids.length) return {contour: [[0, h]], members: [[id, 0]]};
+    if (!kids.length) return {contour: [[0, h]], members: [[id, 0]], centers: [h / 2, h / 2]};
+    // A summary's members go together, as one unit with the summary.
+    const units = [];
+    for (let i = 0; i < kids.length; i++) {
+      const sum = summaryAt.get(kids[i].id);
+      units.push(sum ? {sum} : {kid: kids[i]});
+      if (sum) i += sum.members.length - 1;
+    }
     const acc = [], members = [], offsets = [];
     let firstCenter = null, lastCenter = null;
-    for (const [i, kid] of kids.entries()) {
-      const t = subtree(kid.id, hand);
+    for (const [i, {kid, sum}] of units.entries()) {
+      const t = sum ? summaryTree(sum, hand) : subtree(kid.id, hand);
       // Packed below the causes before it; the first has nothing above it, except by hand.
       let offset = hand ? -Infinity : 0;
       if (members.length) {
@@ -2033,20 +2088,29 @@ function computeLayout() {
       }
       // By hand, a cause goes where it would be without hand moves, moved by its offset, unless the
       // causes above it need the room.
-      if (hand) offset = Math.max(offset, subtree(id, false).offsets[i] + (kid.offsetY || 0));
+      if (hand) offset = Math.max(offset, subtree(id, false).offsets[i] + (kid?.offsetY || 0));
       offsets.push(offset);
       t.contour.forEach(([top, bottom], d) => {
         acc[d] = acc[d] ? [Math.min(acc[d][0], top + offset), Math.max(acc[d][1], bottom + offset)] : [top + offset, bottom + offset];
       });
       for (const [m, y] of t.members) members.push([m, y + offset]);
-      // The kid's box is the first member, not necessarily at the top of its subtree.
-      const center = offset + t.members[0][1] + sizes.get(kid.id).h / 2;
-      firstCenter ??= center; lastCenter = center;
+      firstCenter ??= offset + t.centers[0]; lastCenter = offset + t.centers[1];
     }
     const top = hand ? subtree(id, false).members[0][1] : (firstCenter + lastCenter) / 2 - h / 2;
-    const result = {contour: [[top, top + h], ...acc], members: [[id, top], ...members], offsets};
+    const result = {contour: [[top, top + h], ...acc], members: [[id, top], ...members], offsets, centers: [top + h / 2, top + h / 2]};
     if (!hand) plain.set(id, result);
     return result;
+  }
+
+  // A summary's members, one below the other, and the summary's branch in the next column, its box
+  // centred on them.
+  function summaryTree(sum, hand) {
+    const members = [];
+    let y = 0;
+    for (const m of sum.members) { members.push([m, y]); y += sizes.get(m).h + SIBLING_GAP; }
+    const bottom = y - SIBLING_GAP, t = subtree(sum.id, hand), off = bottom / 2 - t.members[0][1] - sizes.get(sum.id).h / 2;
+    return {contour: [[0, bottom], ...t.contour.map(([a, b]) => [a + off, b + off])], members: [...members, ...t.members.map(([m, my]) => [m, my + off])],
+      centers: [sizes.get(sum.members[0]).h / 2, bottom - sizes.get(sum.members.at(-1)).h / 2]};
   }
 
   // Each tree is placed below the last, its top where it would be without hand moves, so that a
@@ -2059,22 +2123,32 @@ function computeLayout() {
     const origin = bottom === null ? 0 : bottom + SUBTREE_GAP * 2 - (Math.min(...t.contour.map(c => c[0])) - top);
     for (const [id, y] of t.members) {
       const size = sizes.get(id);
-      boxes.set(id, {id, node: byId(id), x: rank.get(id) * (NODE_W + COL_GAP), y: y - top + origin, ...size});
+      boxes.set(id, {id, node: byId(id), x: rank.get(id) * (NODE_W + COL_GAP), y: y - top + origin, inSummary: inSummary.has(id), ...size});
     }
     bottom = origin + Math.max(...t.contour.map(c => c[1])) - top;
   }
 
   const placed = links.filter(l => boxes.has(l.effectId) && boxes.has(l.causeId));
   // parent and children: the effect each cause is drawn under, and each effect's causes in drawing order.
-  return {boxes, edges: routeEdges(boxes, placed, parent, rank), bounds: chartBounds(boxes), parent, children};
+  // summaries: those drawn with a brace.
+  return {boxes, edges: routeEdges(boxes, placed, parent, rank, summaries), bounds: chartBounds(boxes), parent, children, summaries};
 }
 
 // ---- Connectors ----
 
 const midY = b => b.y + b.h / 2;
 
-function routeEdges(boxes, links, parent, rank) {
-  const edges = [];
+function routeEdges(boxes, links, parent, rank, summaries) {
+  const edges = [], braced = new Set(summaries.map(x => x.id));
+  // A summary: a brace across its members, from just right of them, pointing at it.
+  for (const sum of summaries) {
+    const first = boxes.get(sum.members[0]), last = boxes.get(sum.members.at(-1)), b = boxes.get(sum.id);
+    if (!first || !last || !b) continue;
+    const x = first.x + first.w + 14, r = 8, t = first.y, bt = last.y + last.h, y = midY(b);
+    const d = `M ${x} ${t} Q ${x + r} ${t} ${x + r} ${t + r} V ${y - r} Q ${x + r} ${y} ${x + 2 * r} ${y} Q ${x + r} ${y} ${x + r} ${y + r} V ${bt - r} Q ${x + r} ${bt} ${x} ${bt} M ${x + 2 * r} ${y} H ${b.x}`;
+    edges.push({d, shared: false, summary: sum.id, effectId: sum.members[0], linkIds: links.filter(l => l.causeId === sum.id).map(l => l.id)});
+  }
+  links = links.filter(l => !braced.has(l.causeId));
   // Tree links: each effect has a bracket in the gap to its right, joining all its causes.
   const groups = new Map();
   for (const l of links) {
@@ -2170,7 +2244,7 @@ function nodeMarkup(b, opts) {
   const issue = opts.issues?.get(n.id);
   let s = `<g class="node" data-id="${n.id}" transform="translate(${b.x} ${b.y})"${opts.dimmed?.has(n.id) || opts.highlight && !opts.highlight.has(n.id) || opts.dragging?.id === n.id ? ' opacity="0.35"' : ''}>`;
   if (opts.highlight?.has(n.id) && opts.selectedId !== n.id) s += `<rect x="-6" y="-6" width="${w + 12}" height="${h + 12}" rx="12" fill="none" stroke="${C.highlight}" stroke-width="4"/>`;
-  if (opts.selectedId === n.id) s += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="11" fill="none" stroke="${C.select}" stroke-width="3"/>`;
+  if (opts.selectedId === n.id || opts.picked?.has(n.id)) s += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="11" fill="none" stroke="${C.select}" stroke-width="3"/>`;
   else if (issue === 'error') s += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="11" fill="none" stroke="${C.issue}" stroke-width="2" stroke-dasharray="5 4"/>`;
   s += `<rect width="${w}" height="${h}" rx="8" ${attrs({fill: c.fill, stroke: c.stroke, 'stroke-width': c.dash || n.kind === 'condition' ? 1.5 : isPrimary ? 2 : 1, 'stroke-dasharray': c.dash})}/>`;
   const type = CAUSE_TYPES[n.causeType]?.tag;
@@ -2216,7 +2290,7 @@ function nodeMarkup(b, opts) {
   // A stop point closes the branch with a double bar on the right.
   if (n.stopPoint) s += `<path d="M ${w + 7} ${h * .25} V ${h * .75} M ${w + 12} ${h * .25} V ${h * .75}" stroke="${C.stop}" stroke-width="3"/>`;
   // On the canvas only: the collapse toggle where the node's connector leaves it.
-  if (opts.toggles && causeLinks(n.id).length) {
+  if (opts.toggles && causeLinks(n.id).length && !b.inSummary) {
     const open = !collapsed.has(n.id);
     s += `<g class="toggle" transform="translate(${w} ${h / 2})"><title>${open ? 'Collapse' : 'Expand'} this branch (Space)</title><circle r="8" fill="${C.panel}" stroke="${C.wire}" stroke-width="1.5"/><path d="M -3.5 0 H 3.5${open ? '' : ' M 0 -3.5 V 3.5'}" stroke="${C.stop}" stroke-width="1.6"/></g>`;
   }
@@ -2242,7 +2316,7 @@ function chartMarkup(l, opts = {}) {
   let s = `<g font-family="${escapeHtml(CHART_FONT)}">`;
   if (treeStyle()) s += treeEdges(l, C);
   else for (const e of l.edges) {
-    s += `<path class="edge" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${e.shared ? C.shared : C.wire}" stroke-width="1.6"${e.shared ? ' stroke-dasharray="6 4"' : ''}/>`;
+    s += `<path class="edge${e.summary ? ' brace' : ''}" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${e.shared ? C.shared : C.wire}" stroke-width="1.6"${e.shared ? ' stroke-dasharray="6 4"' : ''}/>`;
   }
   for (const e of l.edges) {
     if (!e.junction || treeStyle()) continue;
@@ -2260,6 +2334,13 @@ function treeEdges(l, C) {
   let s = '', bold = '';
   for (const e of l.edges) {
     if (e.shared) { s += `<path class="edge" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${C.shared}" stroke-width="1.6" stroke-dasharray="6 4"/>`; continue; }
+    // A summary's brace, drawn by the summary's status.
+    if (e.summary) {
+      const status = byId(e.summary)?.status;
+      if (status === 'confirmed') bold += `<path class="edge brace" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${C.confirmedWire}" stroke-width="2.6" stroke-linejoin="round"/>`;
+      else s += `<path class="edge brace" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${status === 'ruled-out' ? C.ruledWire : C.wire}" stroke-width="1.6"${status === 'ruled-out' ? ' stroke-dasharray="5 4"' : ''}/>`;
+      continue;
+    }
     const ys = e.branches.map(b => b.y);
     s += `<path class="edge" data-effect="${e.effectId}" d="M ${e.from.x} ${e.from.y} H ${e.bx} M ${e.bx} ${Math.min(e.from.y, ...ys)} V ${Math.max(e.from.y, ...ys)}" fill="none" stroke="${C.wire}" stroke-width="1.6"/>`;
     for (const b of e.branches) {
@@ -2308,13 +2389,20 @@ function renderCanvas() {
   const cannot = !linking ? null : linking.mode === 'move' ? n => n.id === linking.causeId || moveProblem(linking.causeId, linking.fromId, n.id) : n => linkProblem(linking.effectId, n.id);
   const dimmed = cannot ? new Set(state.nodes.filter(cannot).map(n => n.id)) : null;
   const lit = highlight && !linking ? new Set(citingNodes(highlight).map(n => n.id)) : null;
-  svg.innerHTML = chartMarkup(layout, {colors: darkTheme() ? CHART_COLORS_DARK : CHART_COLORS, selectedId: linking ? linking.effectId ?? linking.causeId : selected, issues: issueMap(ruleIssues()), dimmed, highlight: lit, toggles: true, dragging: nodeDrag?.moved ? nodeDrag : null});
+  svg.innerHTML = chartMarkup(layout, {colors: darkTheme() ? CHART_COLORS_DARK : CHART_COLORS, selectedId: linking ? linking.effectId ?? linking.causeId : drag?.hits ? null : selected, picked: linking ? null : drag?.hits ? new Set(drag.hits) : picked, issues: issueMap(ruleIssues()), dimmed, highlight: lit, toggles: true, dragging: nodeDrag?.moved ? nodeDrag : null});
+  // The selection box being drawn.
+  if (drag?.to) {
+    const a = drag.from, b = drag.to, C = darkTheme() ? CHART_COLORS_DARK : CHART_COLORS;
+    svg.insertAdjacentHTML('beforeend', `<rect class="marquee" x="${Math.min(a.x, b.x)}" y="${Math.min(a.y, b.y)}" width="${Math.abs(a.x - b.x)}" height="${Math.abs(a.y - b.y)}" fill="${C.select}" fill-opacity="0.08" stroke="${C.select}" stroke-width="${1.2 / view.k}" stroke-dasharray="${4 / view.k} ${3 / view.k}" pointer-events="none"/>`);
+  }
   svg.classList.toggle('linking', !!linking);
   $('zoomReset').textContent = `${Math.round(view.k * 100)}%`;
 }
 function render() {
   layout = computeLayout();
   if (selected && !layout.boxes.has(selected)) selected = null;
+  picked = new Set([...picked].filter(id => layout.boxes.has(id)));
+  if (picked.size < 2 || !picked.has(selected)) picked.clear();
   if (highlight && !evidenceById(highlight)) highlight = null;
   const issues = ruleIssues(), causes = state.nodes.length - 1;
   $('count').textContent = `${causes} cause${causes === 1 ? '' : 's'} · ${state.evidence.length} evidence item${state.evidence.length === 1 ? '' : 's'}`;
@@ -2328,8 +2416,9 @@ function render() {
   renderCanvas();
   const n = byId(selected);
   $('addAction').disabled = $('addCondition').disabled = !n;
-  $('deleteNode').disabled = !n || n.id === state.problem.primaryEffectId;
-  $('linkCause').disabled = !n;
+  $('deleteNode').disabled = !selection().some(id => id !== state.problem.primaryEffectId);
+  $('linkCause').disabled = !n || picked.size > 1;
+  $('summarise').disabled = !!summaryProblem(selection(), layout.parent.get(selected));
   $('linkBanner').hidden = !linking;
   if (linking) $('linkText').innerHTML = linking.mode === 'move'
     ? `Click the effect to move <b>${escapeHtml(byId(linking.causeId)?.title || '')}</b> under. Faded nodes would make a loop or already have it as a cause.`
@@ -2355,8 +2444,8 @@ function renderStyle() {
   $('addActionName').textContent = tree ? '+ Cause' : '+ Action';
   $('addAction').title = tree ? 'Add a possible cause to the selected effect' : 'Add an action cause to the selected effect';
   $('keyHints').innerHTML = tree
-    ? 'Type to rename · <kbd>Ins</kbd> cause · <kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd> status · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete'
-    : 'Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete';
+    ? 'Type to rename · <kbd>Ins</kbd> cause · <kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd> status · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete'
+    : 'Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete';
 }
 
 function renderTitle() {
@@ -2379,8 +2468,30 @@ const swatch = n => `<span class="sw ${nodeLook(n)}" aria-hidden="true"></span>`
 
 function renderProperties() {
   const box = $('properties');
-  const n = byId(selected);
-  if (n) renderNodeProperties(box, n); else renderRcaProperties(box);
+  const n = byId(selected), ids = selection();
+  if (ids.length > 1) renderSelectionProperties(box, ids); else if (n) renderNodeProperties(box, n); else renderRcaProperties(box);
+}
+
+// Several nodes selected with Ctrl+click: group them, set their status, or delete them.
+function renderSelectionProperties(box, ids) {
+  const nodes = ids.map(byId), tree = treeStyle(), problem = summaryProblem(ids, layout.parent.get(selected)), causes = nodes.filter(isCause);
+  box.innerHTML = `
+    <div class="kind-row"><span class="kind-chip action">${ids.length} SELECTED</span><span class="muted">Ctrl+click adds or takes out one</span></div>
+    <ul class="cause-list">${nodes.map(n => `<li><button data-goto="${n.id}">${swatch(n)}${escapeHtml(n.title)}</button></li>`).join('')}</ul>
+    <div class="section">
+      <div class="panel-title">Summary</div>
+      <p class="note" style="margin-top:0">One new cause that may explain all of them, drawn to their right with a brace.</p>
+      <button class="button block" id="inspSummarise" ${problem ? 'disabled' : ''} title="Alt+G">Add a summary</button>
+      ${problem ? `<p class="note">${escapeHtml(problem)}</p>` : ''}
+    </div>
+    ${tree && causes.length ? `<div class="section"><div class="panel-title">Status of ${plural(causes.length, 'cause')}</div>
+      <div class="segmented status" role="group" aria-label="Status">${Object.entries(STATUSES).map(([k, st], i) =>
+      `<button data-status="${k}" class="${k}" ${pressed(causes.every(c => c.status === k))} title="${st.name} (Alt+${i + 1})">${st.mark} ${st.name}</button>`).join('')}</div></div>` : ''}
+    ${causes.length ? `<button class="button danger block" id="inspDelete" style="margin-top:16px">Delete ${plural(causes.length, 'node')} <kbd>Del</kbd></button>` : ''}`;
+  box.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => { select(b.dataset.goto); scrollToNode(b.dataset.goto); });
+  box.querySelectorAll('[data-status]').forEach(b => b.onclick = () => setNodeStatus(b.dataset.status));
+  $('inspSummarise').onclick = summariseSelected;
+  if ($('inspDelete')) $('inspDelete').onclick = deleteSelected;
 }
 
 // The style cards: one for each chart style, the RCA's own checked.
@@ -2430,13 +2541,15 @@ function renderRcaProperties(box) {
         <dt><kbd>Ctrl+C</kbd> <kbd>Ctrl+V</kbd></dt><dd>Copy the node with its causes; paste it as a cause of the selected node. <kbd>Ctrl+X</kbd> cuts</dd>
         <dt><kbd>Shift+↑</kbd> <kbd>Shift+↓</kbd></dt><dd>Move the cause up or down, with its branch; or Shift+drag it</dd>
         <dt><kbd>Alt+L</kbd></dt><dd>Link an existing node as a cause</dd>
+        <dt>Drag on the canvas</dt><dd>Select the nodes in the box. <kbd>Ctrl+click</kbd> adds or takes out one</dd>
+        <dt><kbd>Alt+G</kbd></dt><dd>Add a summary: one cause shared by the selected causes</dd>
+        <dt>Right-drag, wheel</dt><dd>Pan, zoom</dd>
         <dt><kbd>Space</kbd></dt><dd>Collapse or expand the branch</dd>
         <dt><kbd>Esc</kbd></dt><dd>Cancel linking, moving, or a drag; or clear the selection. In the title: undo what was typed</dd>
         <dt><kbd>Shift+Enter</kbd></dt><dd>In the title: a new line</dd>
         <dt><kbd>Del</kbd></dt><dd>Delete the selected cause</dd>
         <dt><kbd>Ctrl+S</kbd></dt><dd>Save</dd>
         <dt><kbd>Ctrl+Z</kbd> <kbd>Ctrl+Y</kbd></dt><dd>Undo, redo</dd>
-        <dt>Drag, wheel</dt><dd>Pan, zoom</dd>
       </dl>
     </div>`;
   if ($('expandAll')) $('expandAll').onclick = expandAll;
@@ -2456,7 +2569,7 @@ function renderNodeProperties(box, n) {
   const tree = treeStyle();
   const kindName = isPrimary ? 'Primary effect' : tree ? {possible: 'Hypothesis', confirmed: 'Confirmed cause', 'ruled-out': 'Ruled out'}[n.status] : KINDS[n.kind].name;
   const about = [causes.length && !isPrimary ? 'also an effect' : '', causes.length ? `${causes.length} cause${causes.length > 1 ? 's' : ''}` : '',
-    effects.length > 1 ? `supports ${effects.length} effects` : ''].filter(Boolean).join(' · ');
+    layout.summaries.some(x => x.id === n.id) ? `summary of ${effects.length} causes` : effects.length > 1 ? `supports ${effects.length} effects` : ''].filter(Boolean).join(' · ');
   box.innerHTML = `
     <div class="kind-row"><span class="kind-chip ${nodeLook(n)}">${kindName.toUpperCase()}</span><span class="muted">${about}</span></div>
     ${issues.map(i => `<div class="info ${i.level === 'info' ? '' : i.level === 'error' ? 'error' : 'warn'}">${escapeHtml(i.text)}</div>`).join('')}
@@ -2743,6 +2856,7 @@ function focusTitle() {
 }
 
 function deleteSelected() {
+  if (picked.size > 1) { deleteSeveral(); return; }
   const n = byId(selected);
   if (!n || n.id === state.problem.primaryEffectId) return;
   const ids = deletionSet(n.id);
@@ -2753,6 +2867,48 @@ function deleteSelected() {
   selected = effect?.id ?? null;
   render(); persist();
   setStatus(`Deleted ${ids.length} node${ids.length > 1 ? 's' : ''}`);
+}
+
+function deleteSeveral() {
+  const ids = selection().filter(id => id !== state.problem.primaryEffectId);
+  if (!ids.length) return;
+  const all = deletionSet(...ids), others = all.length - ids.length;
+  if (!confirm(`Delete ${plural(ids.length, 'selected node')}${others ? ` and ${plural(others, 'cause')} that only they support` : ''}?`)) return;
+  const next = ids.map(id => layout.parent.get(id)).find(id => id && !all.includes(id));
+  deleteNodes(all);
+  picked.clear(); selected = next ?? null;
+  render(); persist();
+  setStatus(`Deleted ${plural(all.length, 'node')}`);
+}
+
+// ---- Selecting several nodes ----
+// Dragging a box on the empty canvas selects the nodes it touches; Ctrl+click (Cmd+click on a Mac) adds
+// a node or takes it out. With two or more selected, the properties panel acts on them all: give them
+// a summary, set their status in a cause tree, or delete them. A click on a node selects it alone.
+
+const selection = () => picked.size > 1 ? [...picked].filter(byId) : byId(selected) ? [selected] : [];
+function selectMany(ids) {
+  picked = new Set(ids.length > 1 ? ids : []);
+  selected = ids.at(-1) ?? null;
+  render();
+  if (picked.size > 1) setStatus(`${plural(picked.size, 'node')} selected${summaryProblem(ids, layout.parent.get(selected)) ? '' : ': Alt+G gives them a summary'}`);
+}
+function togglePicked(id) {
+  const ids = selection();
+  selectMany(ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
+}
+
+// Alt+G: one new cause shared by the selected causes, drawn to their right with a brace. Its title is
+// ready to type.
+function summariseSelected() {
+  const ids = selection(), problem = summaryProblem(ids, layout.parent.get(selected));
+  if (problem) { setStatus(problem); return; }
+  const effectId = summaryEffect(ids, layout.parent.get(selected)), n = summariseCauses(ids, effectId);
+  picked.clear(); selected = n.id;
+  render(); persist();
+  scrollToNode(n.id);
+  focusTitle();
+  setStatus(`Added a summary of ${plural(ids.length, 'cause')}: type its title`);
 }
 
 // A candidate cause that the evidence rejects moves to the causes ruled out, with its evidence.
@@ -2774,39 +2930,41 @@ function ruleOutSelected() {
   setStatus(`Moved "${n.title}" to the causes ruled out`);
 }
 
-// A cause tree: Alt+1, Alt+2, and Alt+3 set the selected cause's status. A confirmed cause happened,
+// A cause tree: Alt+1, Alt+2, and Alt+3 set the status of the selected causes. A confirmed cause happened,
 // so the effects it leads to did too: the possible ones on the way to the primary effect are confirmed
 // with it. A ruled-out effect stops the way; the issues list flags it. When a confirmed cause becomes
 // a hypothesis or is ruled out, the effects it confirmed go back to hypotheses: each one that has no
 // other confirmed cause and no evidence of its own.
 function setNodeStatus(status) {
-  const n = byId(selected);
-  if (!n || !isCause(n) || !treeStyle()) return;
-  const was = n.status;
-  n.status = status;
+  const nodes = selection().map(byId).filter(isCause);
+  if (!nodes.length || !treeStyle()) return;
   let more = 0, fewer = 0;
-  if (was === 'confirmed' && status !== 'confirmed') {
-    const todo = effectsOf(n.id);
-    while (todo.length) {
-      const e = todo.pop();
-      if (!isCause(e) || e.status !== 'confirmed' || hasEvidence(e) || causesOf(e.id).some(c => c.status === 'confirmed')) continue;
-      e.status = 'possible'; fewer++;
-      todo.push(...effectsOf(e.id));
+  for (const n of nodes) {
+    const was = n.status;
+    n.status = status;
+    if (was === 'confirmed' && status !== 'confirmed') {
+      const todo = effectsOf(n.id);
+      while (todo.length) {
+        const e = todo.pop();
+        if (!isCause(e) || e.status !== 'confirmed' || hasEvidence(e) || causesOf(e.id).some(c => c.status === 'confirmed')) continue;
+        e.status = 'possible'; fewer++;
+        todo.push(...effectsOf(e.id));
+      }
     }
-  }
-  if (status === 'confirmed') {
-    const seen = new Set(), todo = effectsOf(n.id);
-    while (todo.length) {
-      const e = todo.pop();
-      if (seen.has(e.id) || !isCause(e) || e.status === 'ruled-out') continue;
-      seen.add(e.id);
-      if (e.status === 'possible') { e.status = 'confirmed'; more++; }
-      todo.push(...effectsOf(e.id));
+    if (status === 'confirmed') {
+      const seen = new Set(), todo = effectsOf(n.id);
+      while (todo.length) {
+        const e = todo.pop();
+        if (seen.has(e.id) || !isCause(e) || e.status === 'ruled-out') continue;
+        seen.add(e.id);
+        if (e.status === 'possible') { e.status = 'confirmed'; more++; }
+        todo.push(...effectsOf(e.id));
+      }
     }
   }
   render(); persist();
-  setStatus(`"${n.title}": ${STATUSES[status].name.toLowerCase()}${more ? `, with the ${more} effect${more > 1 ? 's' : ''} it leads to` : ''}`
-    + (fewer ? `; ${plural(fewer, 'effect')} it confirmed ${fewer > 1 ? 'are hypotheses' : 'is a hypothesis'} again` : ''));
+  setStatus(`${nodes.length > 1 ? plural(nodes.length, 'cause') : `"${nodes[0].title}"`}: ${STATUSES[status].name.toLowerCase()}${more ? `, with the ${more} effect${more > 1 ? 's' : ''} ${nodes.length > 1 ? 'they lead' : 'it leads'} to` : ''}`
+    + (fewer ? `; ${plural(fewer, 'effect')} ${nodes.length > 1 ? 'they' : 'it'} confirmed ${fewer > 1 ? 'are hypotheses' : 'is a hypothesis'} again` : ''));
 }
 
 // Collapsing is a view setting: saved with the file, but not an undo step.
@@ -2969,6 +3127,7 @@ $('addAction').onclick = () => addCauseToSelected('action');
 $('addCondition').onclick = () => addCauseToSelected('condition');
 $('deleteNode').onclick = deleteSelected;
 $('linkCause').onclick = startLinking;
+$('summarise').onclick = summariseSelected;
 $('cancelLink').onclick = cancelLinking;
 
 // Pointer and keyboard: selecting, dragging nodes, panning, zooming.
@@ -2981,18 +3140,23 @@ function point(e) {
 }
 
 function select(id) {
-  selected = id;
+  selected = id; picked.clear();
   if (id && reveal(id)) autosave();
   render();
 }
 
 const capture = e => { try { svg.setPointerCapture(e.pointerId); } catch {} };
 
+// On the empty canvas, a left drag draws a box that selects the nodes it touches; a right or middle
+// drag, or a finger, pans. While linking, a left drag pans too.
 svg.addEventListener('pointerdown', e => {
+  if (e.button === 1 || e.button === 2) { e.preventDefault(); drag = {x: e.clientX, y: e.clientY, view: {...view}, moved: false, pan: true}; capture(e); return; }
   if (e.button !== 0) return;
   const node = e.target.closest('.node');
   if (node && linking) { pickNode(node.dataset.id); return; }
-  if (node && e.target.closest('.toggle')) { selected = node.dataset.id; toggleCollapse(); return; }
+  if (node && e.target.closest('.toggle')) { select(node.dataset.id); toggleCollapse(); return; }
+  // Ctrl+click (Cmd+click) adds the node to the selection or takes it out.
+  if (node && (e.ctrlKey || e.metaKey)) { togglePicked(node.dataset.id); return; }
   if (node) {
     const id = node.dataset.id, b = layout.boxes.get(id), p = point(e);
     select(id);
@@ -3002,9 +3166,16 @@ svg.addEventListener('pointerdown', e => {
     if (b && layout.parent.has(id)) { nodeDrag = {id, from: layout.parent.get(id), start: {x: e.clientX, y: e.clientY}, moved: false}; capture(e); }
     return;
   }
-  drag = {x: e.clientX, y: e.clientY, view: {...view}, moved: false};
+  drag = {x: e.clientX, y: e.clientY, view: {...view}, moved: false, pan: !!linking || e.pointerType === 'touch', from: point(e)};
   capture(e);
 });
+svg.addEventListener('contextmenu', e => e.preventDefault());
+
+// The nodes a selection box from chart point a to b touches, in drawing order.
+function boxedNodes(a, b) {
+  const l = Math.min(a.x, b.x), r = Math.max(a.x, b.x), t = Math.min(a.y, b.y), bt = Math.max(a.y, b.y);
+  return [...layout.boxes.values()].filter(x => x.x <= r && x.x + x.w >= l && x.y <= bt && x.y + x.h >= t).map(x => x.id);
+}
 svg.addEventListener('pointermove', e => {
   if (nodeShift) { moveShift(e); return; }
   if (nodeDrag) {
@@ -3020,6 +3191,12 @@ svg.addEventListener('pointermove', e => {
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
   if (!drag.moved && Math.hypot(dx, dy) < 4) return;
   drag.moved = true;
+  if (!drag.pan) {
+    drag.to = point(e);
+    drag.hits = boxedNodes(drag.from, drag.to);
+    renderCanvas();
+    return;
+  }
   svg.classList.add('panning');
   view.x = drag.view.x - dx / view.k; view.y = drag.view.y - dy / view.k;
   renderCanvas();
@@ -3027,12 +3204,13 @@ svg.addEventListener('pointermove', e => {
 svg.addEventListener('pointerup', () => {
   if (nodeShift) { finishShift(); return; }
   if (nodeDrag) { finishNodeDrag(); return; }
+  if (drag?.moved && !drag.pan) { const hits = drag.hits; drag = null; highlight = null; selectMany(hits); return; }
   if (drag && !drag.moved && linking) cancelLinking();
-  else if (drag && !drag.moved && (selected || highlight)) { highlight = null; select(null); }
+  else if (drag && !drag.moved && (selected || picked.size || highlight)) { highlight = null; select(null); }
   drag = null;
   svg.classList.remove('panning');
 });
-svg.addEventListener('pointercancel', () => { cancelNodeDrag(); cancelShift(); });
+svg.addEventListener('pointercancel', () => { cancelNodeDrag(); cancelShift(); if (drag) { drag = null; svg.classList.remove('panning'); renderCanvas(); } });
 
 // What dropping the dragged node at chart point p would do. On a sibling's top or bottom 30 %, or in
 // the gap next to it, it is placed above or below that sibling (siblings of its group only);
@@ -3127,7 +3305,14 @@ function zoomToFit() {
   view.y = (b.t + b.b) / 2 - height / view.k / 2;
   renderCanvas();
 }
-svg.addEventListener('wheel', e => { e.preventDefault(); zoom(e.deltaY < 0 ? 1.12 : 1 / 1.12, point(e)); }, {passive: false});
+// The wheel zooms; a sideways wheel or swipe (the thumb wheel of some mice) pans left and right.
+svg.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+    view.x += e.deltaX * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? svg.clientWidth : 1) / view.k;
+    renderCanvas();
+  } else if (e.deltaY) zoom(e.deltaY < 0 ? 1.12 : 1 / 1.12, point(e));
+}, {passive: false});
 $('zoomIn').onclick = () => zoom(1.25);
 $('zoomOut').onclick = () => zoom(.8);
 $('zoomReset').onclick = () => zoom(1 / view.k);
@@ -3168,6 +3353,7 @@ window.addEventListener('keydown', e => {
     else if (status) { e.preventDefault(); setNodeStatus(status); }
     else if (code === 'l' && !e.shiftKey) { e.preventDefault(); startLinking(); }
     else if (code === 'm' && !e.shiftKey) { e.preventDefault(); startMoving(); }
+    else if (code === 'g' && !e.shiftKey) { e.preventDefault(); summariseSelected(); }
     return;
   }
   // Insert adds an action and Shift+Insert a condition; in a cause tree, Insert adds a cause.
@@ -3280,7 +3466,7 @@ function normalizeProject(p) {
   for (const key of ['evidence', 'ruledOut', 'solutions', 'actions']) s[key] = Array.isArray(p[key]) ? p[key] : [];
   s.nodes = p.nodes.filter(n => n?.id).map(n => ({...blankNode(n.kind in KINDS ? n.kind : 'condition', ''), ...n,
     kind: n.kind in KINDS ? n.kind : 'condition', status: n.status in STATUSES ? n.status : 'possible', test: typeof n.test === 'string' ? n.test : '',
-    offsetY: Number.isFinite(n.offsetY) ? n.offsetY : 0, causeType: n.causeType in CAUSE_TYPES ? n.causeType : '',
+    offsetY: Number.isFinite(n.offsetY) ? n.offsetY : 0, causeType: n.causeType in CAUSE_TYPES ? n.causeType : '', summary: n.summary === true,
     evidenceIds: Array.isArray(n.evidenceIds) ? n.evidenceIds : []}));
   if (!s.nodes.some(n => n.id === s.problem.primaryEffectId)) throw Error('The primary effect is missing.');
   s.meta.team = Array.isArray(s.meta.team) ? s.meta.team.filter(m => m?.id) : [];
@@ -3356,7 +3542,8 @@ function loadProject(data, handle = null) {
 // An .xmind file is a zip: XMind 8 keeps the map in content.xml, XMind 2020 and later in content.json.
 // The first sheet opens as a new, unsaved cause tree: the central topic is the primary effect and each
 // attached topic a possible cause, with its notes. A topic "Evidence: …" without subtopics becomes an
-// evidence item that its parent cites. Floating topics, relationships, markers, and styles are left out.
+// evidence item that its parent cites. A summary becomes a summary cause of the topics it spans.
+// Floating topics, relationships, markers, and styles are left out.
 
 const isZip = bytes => bytes[0] === 0x50 && bytes[1] === 0x4b;
 
@@ -3381,11 +3568,15 @@ async function zipText(buffer, name) {
   return null;
 }
 
-// The sheets of a map, each as its central topic: {title, notes, topics}.
+// The sheets of a map, each as its central topic: {title, notes, topics, summaries}. A summary is
+// {from, to, topic}: the first and last of the topics it spans, by index.
+const xmindRange = range => /^\((\d+),(\d+)\)$/.exec(String(range || '').replace(/\s/g, ''));
 async function xmindSheets(buffer) {
   const json = await zipText(buffer, 'content.json');
   if (json !== null) {
-    const topic = t => ({title: t?.title || '', notes: t?.notes?.plain?.content || '', topics: (t?.children?.attached || []).map(topic)});
+    const topic = t => ({title: t?.title || '', notes: t?.notes?.plain?.content || '', topics: (t?.children?.attached || []).map(topic),
+      summaries: (t?.summaries || []).map(x => [xmindRange(x?.range), (t.children?.summary || []).find(st => st?.id === x?.topicId)])
+        .filter(([r, st]) => r && st).map(([r, st]) => ({from: +r[1], to: +r[2], topic: topic(st)}))});
     return (JSON.parse(json) || []).filter(sheet => sheet?.rootTopic).map(sheet => topic(sheet.rootTopic));
   }
   const xml = await zipText(buffer, 'content.xml');
@@ -3393,8 +3584,11 @@ async function xmindSheets(buffer) {
   const doc = new DOMParser().parseFromString(xml, 'application/xml');
   if (doc.querySelector('parsererror')) throw Error('The mind map could not be read.');
   const kids = (el, name) => [...el?.children || []].filter(c => c.localName === name);
+  const group = (t, type) => kids(kids(t, 'children')[0], 'topics').filter(g => g.getAttribute('type') === type).flatMap(g => kids(g, 'topic'));
   const topic = t => ({title: kids(t, 'title')[0]?.textContent || '', notes: kids(kids(t, 'notes')[0], 'plain')[0]?.textContent || '',
-    topics: kids(kids(t, 'children')[0], 'topics').filter(g => g.getAttribute('type') === 'attached').flatMap(g => kids(g, 'topic')).map(topic)});
+    topics: group(t, 'attached').map(topic),
+    summaries: kids(kids(t, 'summaries')[0], 'summary').map(x => [xmindRange(x.getAttribute('range')), group(t, 'summary').find(st => st.getAttribute('id') === x.getAttribute('topic-id'))])
+      .filter(([r, st]) => r && st).map(([r, st]) => ({from: +r[1], to: +r[2], topic: topic(st)}))});
   return kids(doc.documentElement, 'sheet').map(sheet => kids(sheet, 'topic')[0]).filter(Boolean).map(topic);
 }
 
@@ -3410,7 +3604,14 @@ function xmindProject(root) {
     const n = {...blankNode(parent ? 'cause' : 'effect', title), notes: t.notes.trim()};
     s.nodes.push(n);
     if (parent) s.links.push({id: uuid(), effectId: parent.id, causeId: n.id});
-    for (const kid of t.topics) add(kid, n);
+    const kids = t.topics.map(kid => add(kid, n));
+    // A summary hangs from the first topic it spans, and is linked from the others.
+    for (const sum of t.summaries) {
+      const members = kids.slice(sum.from, sum.to + 1).filter(Boolean), m = members.length && add(sum.topic, members[0]);
+      if (!m) continue;
+      for (const x of members.slice(1)) s.links.push({id: uuid(), effectId: x.id, causeId: m.id});
+      m.summary = members.length > 1;
+    }
     return n;
   };
   s.nodes = [];
@@ -5817,6 +6018,7 @@ const GUIDE_TREE = {
     'Run the test, add the result to the <b>evidence log</b>, and cite it on the cause.',
     'Set the status: <b>confirmed</b> (<kbd>Alt+2</kbd>) or <b>ruled out</b> (<kbd>Alt+3</kbd>). Confirming a cause also confirms the effects between it and the primary effect.',
     'Go deeper under each confirmed cause until you reach one you can change, and end the branch with a <b>stop point</b>.',
+    'When several causes at the end of their branches may come from one deeper cause, drag a box around them and choose <b>Summary</b> (<kbd>Alt+G</kbd>): a new cause, shared by all of them, is drawn to their right with a brace. Name it, and test it like any other.',
   ],
   tips: [
     'A cause confirmed without evidence is an error: it is still a hypothesis.',

@@ -1722,6 +1722,117 @@ def run_tests(b):
     assert rca()['meta']['style'] == 'apollo', 'an unknown style opens as Apollo'
     print('PASS: cause tree, statuses, and switching between the chart styles', flush=True)
 
+    # ---- Selecting several causes, and summaries ----
+    def ctrl_click(title):
+        b.js("""const n=document.querySelector(`#chart .node[data-id="${arguments[0]}"] rect:not([fill=none])`),r=n.getBoundingClientRect();
+            n.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,ctrlKey:true,clientX:r.x+5,clientY:r.y+5}));
+            document.getElementById('chart').dispatchEvent(new PointerEvent('pointerup',{bubbles:true,button:0,clientX:r.x+5,clientY:r.y+5}));return true""", [node_id(title)])
+
+    def box_select(*titles, button=0):
+        """A left drag (or another button) on the empty canvas, from above left of the nodes to below right of them."""
+        b.js("""const rs=arguments[0].map(id=>document.querySelector(`#chart .node[data-id="${id}"] rect:not([fill=none])`).getBoundingClientRect()),
+            c=document.getElementById('chart'),x0=Math.min(...rs.map(r=>r.x))-12,y0=Math.min(...rs.map(r=>r.y))-6,
+            x1=Math.max(...rs.map(r=>r.right))-20,y1=Math.max(...rs.map(r=>r.bottom))-4,o={bubbles:true,button:arguments[1]};
+            c.dispatchEvent(new PointerEvent('pointerdown',{...o,clientX:x0,clientY:y0}));
+            c.dispatchEvent(new PointerEvent('pointermove',{...o,clientX:(x0+x1)/2,clientY:(y0+y1)/2}));
+            c.dispatchEvent(new PointerEvent('pointermove',{...o,clientX:x1,clientY:y1}));
+            c.dispatchEvent(new PointerEvent('pointerup',{...o,clientX:x1,clientY:y1}));return true""", [[node_id(t) for t in titles], button])
+
+    def causes_of(title):
+        return [next(n['title'] for n in rca()['nodes'] if n['id'] == l['causeId']) for l in rca()['links'] if l['effectId'] == node_id(title)]
+
+    def outlined():
+        return b.js("return document.querySelectorAll('#chart .node > rect[stroke-width=\"3\"][fill=none]').length")
+
+    def braces():
+        return b.js("return document.querySelectorAll('#chart path.brace').length")
+
+    def box_of(title):
+        return next(x for x in boxes() if x['id'] == node_id(title))
+
+    open_before = rca()
+    click('newProject')
+    b.js('document.querySelector("#dialog [data-choice=tree]").click();return true')
+    set_title('Seal leaks')
+    for title in ('Worn faces', 'Hot faces', 'Dry running', 'Wrong spring'):
+        select('Seal leaks'); key('Insert'); set_title(title)
+    select('Worn faces'); key('Insert'); set_title('Abrasive solids')
+    before_summary = rca()
+
+    box_select('Hot faces', 'Dry running')
+    assert outlined() == 2 and '2 SELECTED' in b.js("return document.getElementById('properties').textContent"), 'a box on the canvas selects the nodes it touches'
+    assert not b.js("return document.getElementById('summarise').disabled") and not b.js("return !!document.querySelector('#chart .marquee')")
+    ctrl_click('Wrong spring')
+    assert outlined() == 3, 'Ctrl+click adds one'
+    ctrl_click('Wrong spring')
+    assert outlined() == 2, 'and takes it out again'
+    key('g', alt=True)
+    assert b.js("return document.activeElement.id") == 'nodeTitle', 'the summary is ready to name'
+    set_title('Heat at the faces')
+    assert node('Heat at the faces')['summary'] is True and node('Heat at the faces')['status'] == 'possible'
+    assert causes_of('Hot faces') == causes_of('Dry running') == ['Heat at the faces'] and causes_of('Seal leaks') == ['Worn faces', 'Hot faces', 'Dry running', 'Wrong spring']
+    assert braces() == 1, 'a summary is drawn with a brace'
+    hot, dry, summary = box_of('Hot faces'), box_of('Dry running'), box_of('Heat at the faces')
+    assert summary['x'] > hot['x'] and abs((summary['y'] + summary['h'] / 2) - (hot['y'] + dry['y'] + dry['h']) / 2) < 1, 'to the right of its causes, centred on them'
+    assert 'summary of 2 causes' in b.js("return document.getElementById('properties').textContent")
+    check_layout()
+    # Confirming the summary confirms the causes it summarises.
+    key('2', alt=True)
+    assert node('Hot faces')['status'] == node('Dry running')['status'] == 'confirmed'
+    key('1', alt=True)
+    for _ in range(4): click('undo')
+    assert rca() == before_summary, 'adding a summary is one undo step'
+
+    # Causes that are not neighbours are put together; causes with their own causes, or of other effects, cannot be summarised.
+    box_select('Worn faces', 'Hot faces')
+    assert b.js("return document.getElementById('summarise').disabled")
+    key('g', alt=True)
+    assert 'end of a branch' in b.js("return document.getElementById('status').textContent") and rca() == before_summary
+    box_select('Abrasive solids', 'Dry running')
+    key('g', alt=True)
+    assert rca() == before_summary
+    select('Hot faces'); ctrl_click('Wrong spring'); click('summarise'); set_title('Heat at the faces')
+    assert causes_of('Seal leaks') == ['Worn faces', 'Hot faces', 'Wrong spring', 'Dry running'] and braces() == 1
+    # Once one of them has another cause, the summary is drawn as a shared cause.
+    select('Hot faces'); key('Insert'); set_title('Cooling lost')
+    assert braces() == 0 and b.js("return document.querySelectorAll('#chart path[stroke-dasharray=\"6 4\"]').length") == 1
+    click('undo'); click('undo')
+    assert braces() == 1
+
+    # Status and delete act on every selected cause; a right drag pans, and keeps the selection.
+    box_select('Wrong spring', 'Dry running'); key('3', alt=True)
+    assert node('Dry running')['status'] == node('Wrong spring')['status'] == 'ruled-out' and '2 causes: ruled out' in b.js("return document.getElementById('status').textContent")
+    view_before = b.js("return document.getElementById('chart').getAttribute('viewBox')")
+    box_select('Worn faces', button=2)
+    assert b.js("return document.getElementById('chart').getAttribute('viewBox')") != view_before and outlined() == 2, 'a right drag pans'
+    wheel = lambda dx, dy: b.js("const c=document.getElementById('chart');c.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaX:arguments[0],deltaY:arguments[1],clientX:600,clientY:400}));return c.getAttribute('viewBox').split(' ').map(Number)", [dx, dy])
+    v0 = b.js("return document.getElementById('chart').getAttribute('viewBox').split(' ').map(Number)")
+    v1 = wheel(120, 0)
+    assert v1[0] > v0[0] and v1[1:] == v0[1:], 'a sideways wheel pans right, without zooming'
+    assert wheel(-120, 0) == v0, 'and back left'
+    assert wheel(0, 100)[2] > v0[2], 'the wheel still zooms'
+    select('Worn faces'); ctrl_click('Wrong spring'); key('Delete')
+    assert {'Worn faces', 'Abrasive solids', 'Wrong spring'}.isdisjoint(n['title'] for n in rca()['nodes']), 'deleting several takes the causes only they support'
+    select('Hot faces')
+    assert outlined() == 1, 'a click selects one node'
+
+    # XMind summaries come in as summaries.
+    zen = json.dumps([{'id': 's1', 'title': 'Sheet 1', 'rootTopic': {'id': 'r', 'title': 'Pressure low', 'children': {'attached': [
+        {'id': 'a', 'title': 'Gas temperature', 'children': {'attached': [{'id': 'a1', 'title': 'Ambient cooler'}, {'id': 'a2', 'title': 'Sun to shadow'}],
+         'summary': [{'id': 'sum', 'title': 'Temperature swing'}]}, 'summaries': [{'id': 'x', 'range': '(0,1)', 'topicId': 'sum'}]}]}}}])
+    open_bytes('sum.xmind', xmind({'content.json': zen}))
+    assert node('Temperature swing')['summary'] is True and causes_of('Ambient cooler') == causes_of('Sun to shadow') == ['Temperature swing'] and braces() == 1
+    xml = ('<?xml version="1.0" encoding="UTF-8"?><xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0" version="2.0"><sheet id="s1">'
+        '<topic id="r"><title>Pressure low</title><children><topics type="attached"><topic id="a1"><title>Ambient cooler</title></topic>'
+        '<topic id="a2"><title>Sun to shadow</title></topic></topics><topics type="summary"><topic id="sum"><title>Temperature swing</title></topic></topics></children>'
+        '<summaries><summary id="x" range="(0,1)" topic-id="sum"/></summaries></topic></sheet></xmap-content>')
+    open_bytes('sum8.xmind', xmind({'content.xml': xml}))
+    assert node('Temperature swing')['summary'] is True and braces() == 1, 'and from XMind 8'
+    load(rca())
+    assert braces() == 1, 'a summary is kept in the file'
+    load(open_before)
+    print('PASS: box selection, summaries, and acting on several causes', flush=True)
+
     # ---- Layout of other chart shapes ----
     SIBLING_GAP = 16  # as in 01-constants.js
 

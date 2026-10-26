@@ -408,6 +408,7 @@ const GUIDE_TREE = {
     'Run the test, add the result to the <b>evidence log</b>, and cite it on the cause.',
     'Set the status: <b>confirmed</b> (<kbd>Alt+2</kbd>) or <b>ruled out</b> (<kbd>Alt+3</kbd>). Confirming a cause also confirms the effects between it and the primary effect.',
     'Go deeper under each confirmed cause until you reach one you can change, and end the branch with a <b>stop point</b>.',
+    'When several causes at the end of their branches may come from one deeper cause, drag a box around them and choose <b>Summary</b> (<kbd>Alt+G</kbd>): a new cause, shared by all of them, is drawn to their right with a brace. Name it, and test it like any other.',
   ],
   tips: [
     'A cause confirmed without evidence is an error: it is still a hypothesis.',

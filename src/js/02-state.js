@@ -22,11 +22,11 @@ function uuid() {
 const today = () => new Date().toISOString().slice(0, 10);
 
 // status is used in a cause tree; test, how the cause is or was tested, in both styles. causeType: a
-// key of CAUSE_TYPES, or ''. offsetY: how far
+// key of CAUSE_TYPES, or ''. summary: drawn as the summary of its effects (see summariseCauses). offsetY: how far
 // the node is moved down by hand (negative: up) from where the layout puts it.
 const blankNode = (kind, title) => ({
   id: uuid(), kind, title, description: '', evidenceIds: [], status: 'possible', test: '',
-  unverified: false, controllable: false, causeType: '', stopPoint: null, notes: '', offsetY: 0,
+  unverified: false, controllable: false, causeType: '', summary: false, stopPoint: null, notes: '', offsetY: 0,
 });
 
 const blankSignoff = () => Object.fromEntries(Object.keys(SIGNOFF_ROLES).map(k => [k, {name: '', date: ''}]));
@@ -48,6 +48,7 @@ function blankState(style = 'apollo') {
 
 let state = blankState();
 let selected = null;           // node id
+let picked = new Set();        // with Ctrl+click, the nodes selected together, `selected` among them
 let collapsed = new Set();     // node ids whose causes are hidden; view state, not undoable
 let view = {x: 0, y: 0, k: 1}; // chart point at the top-left of the canvas, and pixels per unit
 let drag = null;               // the pointer gesture in progress
@@ -64,7 +65,7 @@ const evidenceById = id => state.evidence.find(e => e.id === id);
 const treeStyle = () => state.meta.style === 'tree';
 
 function resetInteraction() {
-  selected = null; drag = null; nodeDrag = null; nodeShift = null; linking = null; highlight = null;
+  selected = null; picked.clear(); drag = null; nodeDrag = null; nodeShift = null; linking = null; highlight = null;
 }
 
 // The file and the autosave hold the RCA and the collapsed branches.

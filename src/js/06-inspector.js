@@ -12,8 +12,30 @@ const swatch = n => `<span class="sw ${nodeLook(n)}" aria-hidden="true"></span>`
 
 function renderProperties() {
   const box = $('properties');
-  const n = byId(selected);
-  if (n) renderNodeProperties(box, n); else renderRcaProperties(box);
+  const n = byId(selected), ids = selection();
+  if (ids.length > 1) renderSelectionProperties(box, ids); else if (n) renderNodeProperties(box, n); else renderRcaProperties(box);
+}
+
+// Several nodes selected with Ctrl+click: group them, set their status, or delete them.
+function renderSelectionProperties(box, ids) {
+  const nodes = ids.map(byId), tree = treeStyle(), problem = summaryProblem(ids, layout.parent.get(selected)), causes = nodes.filter(isCause);
+  box.innerHTML = `
+    <div class="kind-row"><span class="kind-chip action">${ids.length} SELECTED</span><span class="muted">Ctrl+click adds or takes out one</span></div>
+    <ul class="cause-list">${nodes.map(n => `<li><button data-goto="${n.id}">${swatch(n)}${escapeHtml(n.title)}</button></li>`).join('')}</ul>
+    <div class="section">
+      <div class="panel-title">Summary</div>
+      <p class="note" style="margin-top:0">One new cause that may explain all of them, drawn to their right with a brace.</p>
+      <button class="button block" id="inspSummarise" ${problem ? 'disabled' : ''} title="Alt+G">Add a summary</button>
+      ${problem ? `<p class="note">${escapeHtml(problem)}</p>` : ''}
+    </div>
+    ${tree && causes.length ? `<div class="section"><div class="panel-title">Status of ${plural(causes.length, 'cause')}</div>
+      <div class="segmented status" role="group" aria-label="Status">${Object.entries(STATUSES).map(([k, st], i) =>
+      `<button data-status="${k}" class="${k}" ${pressed(causes.every(c => c.status === k))} title="${st.name} (Alt+${i + 1})">${st.mark} ${st.name}</button>`).join('')}</div></div>` : ''}
+    ${causes.length ? `<button class="button danger block" id="inspDelete" style="margin-top:16px">Delete ${plural(causes.length, 'node')} <kbd>Del</kbd></button>` : ''}`;
+  box.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => { select(b.dataset.goto); scrollToNode(b.dataset.goto); });
+  box.querySelectorAll('[data-status]').forEach(b => b.onclick = () => setNodeStatus(b.dataset.status));
+  $('inspSummarise').onclick = summariseSelected;
+  if ($('inspDelete')) $('inspDelete').onclick = deleteSelected;
 }
 
 // The style cards: one for each chart style, the RCA's own checked.
@@ -63,13 +85,15 @@ function renderRcaProperties(box) {
         <dt><kbd>Ctrl+C</kbd> <kbd>Ctrl+V</kbd></dt><dd>Copy the node with its causes; paste it as a cause of the selected node. <kbd>Ctrl+X</kbd> cuts</dd>
         <dt><kbd>Shift+↑</kbd> <kbd>Shift+↓</kbd></dt><dd>Move the cause up or down, with its branch; or Shift+drag it</dd>
         <dt><kbd>Alt+L</kbd></dt><dd>Link an existing node as a cause</dd>
+        <dt>Drag on the canvas</dt><dd>Select the nodes in the box. <kbd>Ctrl+click</kbd> adds or takes out one</dd>
+        <dt><kbd>Alt+G</kbd></dt><dd>Add a summary: one cause shared by the selected causes</dd>
+        <dt>Right-drag, wheel</dt><dd>Pan, zoom</dd>
         <dt><kbd>Space</kbd></dt><dd>Collapse or expand the branch</dd>
         <dt><kbd>Esc</kbd></dt><dd>Cancel linking, moving, or a drag; or clear the selection. In the title: undo what was typed</dd>
         <dt><kbd>Shift+Enter</kbd></dt><dd>In the title: a new line</dd>
         <dt><kbd>Del</kbd></dt><dd>Delete the selected cause</dd>
         <dt><kbd>Ctrl+S</kbd></dt><dd>Save</dd>
         <dt><kbd>Ctrl+Z</kbd> <kbd>Ctrl+Y</kbd></dt><dd>Undo, redo</dd>
-        <dt>Drag, wheel</dt><dd>Pan, zoom</dd>
       </dl>
     </div>`;
   if ($('expandAll')) $('expandAll').onclick = expandAll;
@@ -89,7 +113,7 @@ function renderNodeProperties(box, n) {
   const tree = treeStyle();
   const kindName = isPrimary ? 'Primary effect' : tree ? {possible: 'Hypothesis', confirmed: 'Confirmed cause', 'ruled-out': 'Ruled out'}[n.status] : KINDS[n.kind].name;
   const about = [causes.length && !isPrimary ? 'also an effect' : '', causes.length ? `${causes.length} cause${causes.length > 1 ? 's' : ''}` : '',
-    effects.length > 1 ? `supports ${effects.length} effects` : ''].filter(Boolean).join(' · ');
+    layout.summaries.some(x => x.id === n.id) ? `summary of ${effects.length} causes` : effects.length > 1 ? `supports ${effects.length} effects` : ''].filter(Boolean).join(' · ');
   box.innerHTML = `
     <div class="kind-row"><span class="kind-chip ${nodeLook(n)}">${kindName.toUpperCase()}</span><span class="muted">${about}</span></div>
     ${issues.map(i => `<div class="info ${i.level === 'info' ? '' : i.level === 'error' ? 'error' : 'warn'}">${escapeHtml(i.text)}</div>`).join('')}

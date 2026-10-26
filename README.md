@@ -76,6 +76,16 @@ One cause can support more than one effect. To chart that:
 
 **Esc**, **Cancel**, or a click on the empty canvas stops linking. The selected cause's **Supports** section lists every effect it supports; **×** removes one link. A cause keeps at least one effect; to take it off the chart, delete it.
 
+## Select several, and summaries
+
+**Drag a box** on the empty canvas to select the nodes it touches; each is outlined. **Ctrl+click** (**Cmd+click** on a Mac) adds one node or takes it out. A click on a node selects it alone. To pan, drag with the **right** or **middle** mouse button; the wheel zooms. With two or more selected, the properties panel lists them and acts on them all:
+
+- **Summary** (in the edit bar, or **Alt+G**): when several causes at the end of their branches may come from one deeper cause, a new cause shared by all of them goes to their right, drawn with a brace across them. Its title is ready to type, and it is tested like any other cause: confirming it confirms the causes it summarises. The causes must share an effect and have no causes of their own; they are put next to each other.
+- In a cause tree, set the **status** of them all (**Alt+1**, **Alt+2**, **Alt+3**).
+- **Delete** them all (**Del**), with the causes that only they support.
+
+A summary stays drawn with its brace while it is the only cause of its causes and they are neighbours under one effect. Once one of them gets another cause, it is drawn as a shared cause, with dashed links. To remove a summary, delete it. Summaries in XMind maps come in as summaries.
+
 ## Move and reorder causes
 
 The chart lays itself out. Dragging a cause changes the structure:
@@ -271,7 +281,7 @@ All causes under one effect are joined by AND: each was needed. Every effect nee
 
 **Delete** removes the selected cause. Causes that supported only that cause go with it; you are asked first. A cause that also supports another effect stays. The primary effect cannot be deleted.
 
-Drag the empty canvas to pan, use the wheel to zoom, and **Fit** to see the whole chart.
+Drag the empty canvas with the right or middle mouse button to pan (a left drag selects), use the wheel to zoom (a sideways wheel or swipe pans left and right), and **Fit** to see the whole chart.
 
 ## Reports and exports
 

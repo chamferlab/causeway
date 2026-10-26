@@ -15,6 +15,7 @@ function focusTitle() {
 }
 
 function deleteSelected() {
+  if (picked.size > 1) { deleteSeveral(); return; }
   const n = byId(selected);
   if (!n || n.id === state.problem.primaryEffectId) return;
   const ids = deletionSet(n.id);
@@ -25,6 +26,48 @@ function deleteSelected() {
   selected = effect?.id ?? null;
   render(); persist();
   setStatus(`Deleted ${ids.length} node${ids.length > 1 ? 's' : ''}`);
+}
+
+function deleteSeveral() {
+  const ids = selection().filter(id => id !== state.problem.primaryEffectId);
+  if (!ids.length) return;
+  const all = deletionSet(...ids), others = all.length - ids.length;
+  if (!confirm(`Delete ${plural(ids.length, 'selected node')}${others ? ` and ${plural(others, 'cause')} that only they support` : ''}?`)) return;
+  const next = ids.map(id => layout.parent.get(id)).find(id => id && !all.includes(id));
+  deleteNodes(all);
+  picked.clear(); selected = next ?? null;
+  render(); persist();
+  setStatus(`Deleted ${plural(all.length, 'node')}`);
+}
+
+// ---- Selecting several nodes ----
+// Dragging a box on the empty canvas selects the nodes it touches; Ctrl+click (Cmd+click on a Mac) adds
+// a node or takes it out. With two or more selected, the properties panel acts on them all: give them
+// a summary, set their status in a cause tree, or delete them. A click on a node selects it alone.
+
+const selection = () => picked.size > 1 ? [...picked].filter(byId) : byId(selected) ? [selected] : [];
+function selectMany(ids) {
+  picked = new Set(ids.length > 1 ? ids : []);
+  selected = ids.at(-1) ?? null;
+  render();
+  if (picked.size > 1) setStatus(`${plural(picked.size, 'node')} selected${summaryProblem(ids, layout.parent.get(selected)) ? '' : ': Alt+G gives them a summary'}`);
+}
+function togglePicked(id) {
+  const ids = selection();
+  selectMany(ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
+}
+
+// Alt+G: one new cause shared by the selected causes, drawn to their right with a brace. Its title is
+// ready to type.
+function summariseSelected() {
+  const ids = selection(), problem = summaryProblem(ids, layout.parent.get(selected));
+  if (problem) { setStatus(problem); return; }
+  const effectId = summaryEffect(ids, layout.parent.get(selected)), n = summariseCauses(ids, effectId);
+  picked.clear(); selected = n.id;
+  render(); persist();
+  scrollToNode(n.id);
+  focusTitle();
+  setStatus(`Added a summary of ${plural(ids.length, 'cause')}: type its title`);
 }
 
 // A candidate cause that the evidence rejects moves to the causes ruled out, with its evidence.
@@ -46,39 +89,41 @@ function ruleOutSelected() {
   setStatus(`Moved "${n.title}" to the causes ruled out`);
 }
 
-// A cause tree: Alt+1, Alt+2, and Alt+3 set the selected cause's status. A confirmed cause happened,
+// A cause tree: Alt+1, Alt+2, and Alt+3 set the status of the selected causes. A confirmed cause happened,
 // so the effects it leads to did too: the possible ones on the way to the primary effect are confirmed
 // with it. A ruled-out effect stops the way; the issues list flags it. When a confirmed cause becomes
 // a hypothesis or is ruled out, the effects it confirmed go back to hypotheses: each one that has no
 // other confirmed cause and no evidence of its own.
 function setNodeStatus(status) {
-  const n = byId(selected);
-  if (!n || !isCause(n) || !treeStyle()) return;
-  const was = n.status;
-  n.status = status;
+  const nodes = selection().map(byId).filter(isCause);
+  if (!nodes.length || !treeStyle()) return;
   let more = 0, fewer = 0;
-  if (was === 'confirmed' && status !== 'confirmed') {
-    const todo = effectsOf(n.id);
-    while (todo.length) {
-      const e = todo.pop();
-      if (!isCause(e) || e.status !== 'confirmed' || hasEvidence(e) || causesOf(e.id).some(c => c.status === 'confirmed')) continue;
-      e.status = 'possible'; fewer++;
-      todo.push(...effectsOf(e.id));
+  for (const n of nodes) {
+    const was = n.status;
+    n.status = status;
+    if (was === 'confirmed' && status !== 'confirmed') {
+      const todo = effectsOf(n.id);
+      while (todo.length) {
+        const e = todo.pop();
+        if (!isCause(e) || e.status !== 'confirmed' || hasEvidence(e) || causesOf(e.id).some(c => c.status === 'confirmed')) continue;
+        e.status = 'possible'; fewer++;
+        todo.push(...effectsOf(e.id));
+      }
     }
-  }
-  if (status === 'confirmed') {
-    const seen = new Set(), todo = effectsOf(n.id);
-    while (todo.length) {
-      const e = todo.pop();
-      if (seen.has(e.id) || !isCause(e) || e.status === 'ruled-out') continue;
-      seen.add(e.id);
-      if (e.status === 'possible') { e.status = 'confirmed'; more++; }
-      todo.push(...effectsOf(e.id));
+    if (status === 'confirmed') {
+      const seen = new Set(), todo = effectsOf(n.id);
+      while (todo.length) {
+        const e = todo.pop();
+        if (seen.has(e.id) || !isCause(e) || e.status === 'ruled-out') continue;
+        seen.add(e.id);
+        if (e.status === 'possible') { e.status = 'confirmed'; more++; }
+        todo.push(...effectsOf(e.id));
+      }
     }
   }
   render(); persist();
-  setStatus(`"${n.title}": ${STATUSES[status].name.toLowerCase()}${more ? `, with the ${more} effect${more > 1 ? 's' : ''} it leads to` : ''}`
-    + (fewer ? `; ${plural(fewer, 'effect')} it confirmed ${fewer > 1 ? 'are hypotheses' : 'is a hypothesis'} again` : ''));
+  setStatus(`${nodes.length > 1 ? plural(nodes.length, 'cause') : `"${nodes[0].title}"`}: ${STATUSES[status].name.toLowerCase()}${more ? `, with the ${more} effect${more > 1 ? 's' : ''} ${nodes.length > 1 ? 'they lead' : 'it leads'} to` : ''}`
+    + (fewer ? `; ${plural(fewer, 'effect')} ${nodes.length > 1 ? 'they' : 'it'} confirmed ${fewer > 1 ? 'are hypotheses' : 'is a hypothesis'} again` : ''));
 }
 
 // Collapsing is a view setting: saved with the file, but not an undo step.
@@ -241,4 +286,5 @@ $('addAction').onclick = () => addCauseToSelected('action');
 $('addCondition').onclick = () => addCauseToSelected('condition');
 $('deleteNode').onclick = deleteSelected;
 $('linkCause').onclick = startLinking;
+$('summarise').onclick = summariseSelected;
 $('cancelLink').onclick = cancelLinking;

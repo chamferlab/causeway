@@ -97,7 +97,7 @@ function pasteBranchData(data, effectId) {
     const text = key => typeof n[key] === 'string' ? n[key] : '';
     state.nodes.push({...blankNode(kind, text('title')), id: ids.get(old),
       description: text('description'), test: text('test'), notes: text('notes'), evidenceIds: kept,
-      status: n.status in STATUSES ? n.status : 'possible', unverified: n.unverified === true, controllable: n.controllable === true, causeType: n.causeType in CAUSE_TYPES ? n.causeType : '',
+      status: n.status in STATUSES ? n.status : 'possible', unverified: n.unverified === true, controllable: n.controllable === true, causeType: n.causeType in CAUSE_TYPES ? n.causeType : '', summary: n.summary === true,
       stopPoint: n.stopPoint && n.stopPoint.reason in STOP_REASONS ? {reason: n.stopPoint.reason, note: typeof n.stopPoint.note === 'string' ? n.stopPoint.note : ''} : null,
       offsetY: old !== data.rootId && Number.isFinite(n.offsetY) ? n.offsetY : 0});
   }
@@ -318,13 +318,13 @@ function reachable(links = state.links) {
   return seen;
 }
 
-// Deleting a node also deletes the causes that only it supported. Returns their ids,
-// the node itself first, without changing anything.
-function deletionSet(id) {
-  if (id === state.problem.primaryEffectId) return [];
-  const remaining = state.links.filter(l => l.effectId !== id && l.causeId !== id);
+// Deleting nodes also deletes the causes that only they supported. Returns their ids,
+// the nodes themselves first, without changing anything.
+function deletionSet(...ids) {
+  ids = ids.filter(id => id !== state.problem.primaryEffectId);
+  const gone = new Set(ids), remaining = state.links.filter(l => !gone.has(l.effectId) && !gone.has(l.causeId));
   const keep = reachable(remaining);
-  return [id, ...state.nodes.filter(n => n.id !== id && !keep.has(n.id)).map(n => n.id)];
+  return ids.length ? [...ids, ...state.nodes.filter(n => !gone.has(n.id) && !keep.has(n.id)).map(n => n.id)] : [];
 }
 function deleteNodes(ids) {
   const gone = new Set(ids);
@@ -386,6 +386,36 @@ function placeCause(effectId, causeId, siblingId, after) {
   state.links.splice(state.links.indexOf(link), 1);
   state.links.splice(state.links.indexOf(anchor) + (after ? 1 : 0), 0, link);
   byId(causeId).offsetY = 0;
+}
+
+// ---- Summaries ----
+// Causes at the end of their branches, under one effect, can share one deeper cause: a summary. It is
+// an ordinary cause, linked as a cause of each of them, drawn once to their right with a brace across
+// them instead of a link from each. It stays drawn so while they are neighbours under one effect and
+// it is their only cause; otherwise its links are drawn as a shared cause's.
+
+// Why the causes cannot be summarised, or null when they can. Returns their effect with `effect`.
+function summaryEffect(ids, prefer) {
+  if (ids.length < 2 || ids.includes(state.problem.primaryEffectId)) return null;
+  const common = ids.map(id => new Set(effectLinks(id).map(l => l.effectId))).reduce((a, b) => new Set([...a].filter(id => b.has(id))));
+  return common.has(prefer) ? prefer : [...common][0] ?? null;
+}
+function summaryProblem(ids, prefer) {
+  if (ids.length < 2) return 'Select two or more causes to summarise: drag a box around them.';
+  if (ids.includes(state.problem.primaryEffectId)) return 'The primary effect cannot be summarised.';
+  if (ids.some(id => causeLinks(id).length)) return 'Only causes at the end of a branch can be summarised: these have causes of their own.';
+  return summaryEffect(ids, prefer) ? null : 'Only causes of the same effect can be summarised.';
+}
+// The new cause goes under each of them. Their links are put together, where the first of them is.
+function summariseCauses(ids, effectId) {
+  const members = new Set(ids), links = state.links.filter(l => l.effectId === effectId && members.has(l.causeId));
+  const at = state.links.indexOf(links[0]);
+  state.links = state.links.filter(l => !links.includes(l));
+  state.links.splice(at, 0, ...links);
+  const n = {...blankNode('cause', 'New cause'), summary: true};
+  state.nodes.push(n);
+  for (const l of links) { addLink(l.causeId, n.id); byId(l.causeId).offsetY = 0; collapsed.delete(l.causeId); }
+  return n;
 }
 
 // Expands every collapsed branch that hides the node. Returns whether anything changed.
