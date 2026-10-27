@@ -1,11 +1,26 @@
 // Edits on the chart.
 
-function addCauseToSelected(kind) {
+// From a button, the new cause's title is ready to type. From a key, the new cause is selected and the
+// keys stay on the chart, so that Tab and Enter can go on adding; typing starts its title.
+function addCauseToSelected(kind, edit = true) {
   if (!byId(selected)) return;
-  const n = addCause(selected, kind);
+  addedCause(addCause(selected, kind), edit);
+}
+// Enter: a cause beside the selected one, of the same kind, under the effect it is drawn under.
+function addSiblingToSelected() {
+  const n = byId(selected), effectId = layout.parent.get(selected);
+  if (!n) return;
+  if (!effectId) { setStatus('The primary effect has no siblings: Tab adds a cause'); return; }
+  const sibling = addCause(effectId, ['action', 'condition'].includes(n.kind) ? n.kind : 'action');
+  placeCause(effectId, sibling.id, n.id, true);
+  addedCause(sibling, false);
+}
+function addedCause(n, edit) {
   selected = n.id;
   render(); persist();
-  focusTitle();
+  if (edit) { focusTitle(); return; }
+  scrollToNode(n.id);
+  setStatus(`Added ${treeStyle() ? 'a cause' : `an ${KINDS[n.kind].name.toLowerCase()}`}: type to name it`);
 }
 
 // After adding a cause the title is selected, so typing replaces the placeholder.

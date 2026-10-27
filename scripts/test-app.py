@@ -223,7 +223,7 @@ def run_tests(b):
 
     select('Heat input from face friction and pump')
     key('Insert')
-    assert rca()['nodes'][-1]['kind'] == 'action' and b.js("return document.activeElement.id") == 'nodeTitle', 'Insert adds an action'
+    assert rca()['nodes'][-1]['kind'] == 'action' and b.js("return document.activeElement.id") != 'nodeTitle', 'Insert adds an action, without editing it'
     select('Heat input from face friction and pump')
     key('Insert', shift=True)
     assert rca()['nodes'][-1]['kind'] == 'condition', 'Shift+Insert adds a condition'
@@ -244,7 +244,40 @@ def run_tests(b):
     assert len(rca()['nodes']) == count, 'Tab on a button moves the focus and adds nothing'
     click('undo'); click('undo'); click('undo'); click('undo'); click('undo'); click('undo')
     assert rca() == before
-    print('PASS: Insert, Shift+Insert, Tab, Shift+Tab, Alt+C and Delete keys', flush=True)
+
+    # Tab again adds a cause of the new cause, Enter a sibling of the same kind; typing names the selected one.
+    def node(title):
+        return next(n for n in rca()['nodes'] if n['title'] == title)
+
+    def selected_id():
+        return b.js("return document.querySelector('#chart .node > rect[stroke-width=\"3\"][fill=none]')?.parentNode.dataset.id")
+    select('Heat input from face friction and pump')
+    key('Tab'); child = rca()['nodes'][-1]['id']
+    key('Tab'); grandchild = rca()['nodes'][-1]['id']
+    assert selected_id() == grandchild and b.js("return document.activeElement.id") != 'nodeTitle', 'Tab, Tab nests, and does not start editing'
+    assert any(l['effectId'] == child and l['causeId'] == grandchild for l in rca()['links'])
+    type_keys('Dry')
+    assert b.js("return document.activeElement.id") == 'nodeTitle' and node('Dry')['id'] == grandchild, 'typing starts the title'
+    type_keys(['\ue007'], on_page=False)
+    assert b.js("return document.activeElement.id") != 'nodeTitle', 'Enter finishes the title'
+    key('Enter')
+    sibling = rca()['nodes'][-1]
+    assert sibling['kind'] == 'action' and any(l['effectId'] == child and l['causeId'] == sibling['id'] for l in rca()['links']) and selected_id() == sibling['id'], 'Enter adds a sibling'
+    links = [l['causeId'] for l in rca()['links'] if l['effectId'] == child]
+    assert links.index(sibling['id']) == links.index(grandchild) + 1, 'just after the selected cause'
+    select('Heat input from face friction and pump'); key('Tab', shift=True); key('Enter')
+    assert rca()['nodes'][-1]['kind'] == 'condition', 'a sibling of a condition is a condition'
+    count = len(rca()['nodes'])
+    b.js('document.querySelector(`#chart .node[data-id="${arguments[0]}"] rect:not([fill=none])`).dispatchEvent(new PointerEvent("pointerdown",{bubbles:true,button:0}));document.getElementById("chart").dispatchEvent(new PointerEvent("pointerup",{bubbles:true,button:0}));return true', [rca()['problem']['primaryEffectId']])
+    key('Enter')
+    assert len(rca()['nodes']) == count, 'the primary effect has no sibling'
+    key('F2')
+    assert b.js("return document.activeElement.id") == 'nodeTitle', 'F2 edits the title'
+    b.js('document.activeElement.blur();return true')
+    check_layout()
+    for _ in range(6): click('undo')
+    assert rca() == before, 'each key is one undo step'
+    print('PASS: Insert, Shift+Insert, Tab, Shift+Tab, Enter, F2, Alt+C and Delete keys', flush=True)
 
     # Typing on a selected node replaces its title, even with letters that are commands with Alt.
     select('Heat input from face friction and pump')

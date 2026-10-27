@@ -313,7 +313,7 @@ const GUIDES = {
     what: 'The core of the RCA. In the <b>Apollo</b> style, every effect has the causes that were all needed for it, joined by AND: at least one <b>action</b> (momentary, at a point in time) and one <b>condition</b> (it existed over time). Every cause is backed by evidence, and each branch ends at a <b>stop point</b>.',
     when: 'Throughout. Start it as soon as the primary effect is known, and add to it from the 5 Whys, the fishbone, and the timeline.',
     steps: [
-      'Select the primary effect and ask: what action, and what condition, were both needed for it? <b>+ Action</b> (<kbd>Ins</kbd>) and <b>+ Condition</b> (<kbd>Shift+Ins</kbd>) add them.',
+      'Select the primary effect and ask: what action, and what condition, were both needed for it? <b>+ Action</b> (<kbd>Tab</kbd>) and <b>+ Condition</b> (<kbd>Shift+Tab</kbd>) add them; <kbd>Enter</kbd> adds another beside the selected one. Type to name the new cause.',
       'Do the same for each cause, working left to right.',
       'Cite <b>evidence</b> on each cause from its properties. Without it, the cause shows an orange <b>?</b>.',
       'Where one cause supports several effects, <b>Link cause</b> (<kbd>Alt+L</kbd>) draws the second link.',
@@ -404,7 +404,7 @@ const GUIDE_TREE = {
   name: 'Cause tree',
   what: 'In the <b>cause tree</b> style, each effect has its possible causes, any of which may explain it. Each is a <b>hypothesis</b>, tested until it is <b>confirmed</b> or <b>ruled out</b>. A confirmed branch, drawn bold, leads to the root cause.',
   steps: [
-    'Select the primary effect and add its possible causes with <b>+ Cause</b> (<kbd>Ins</kbd>). Each starts as a hypothesis, <b>H</b>.',
+    'Select the primary effect and add its possible causes with <b>+ Cause</b> (<kbd>Tab</kbd>; <kbd>Enter</kbd> adds another beside it). Each starts as a hypothesis, <b>H</b>.',
     'Write in <b>How it is tested</b> the check that will confirm or rule it out.',
     'Run the test, add the result to the <b>evidence log</b>, and cite it on the cause.',
     'Set the status: <b>confirmed</b> (<kbd>Alt+2</kbd>) or <b>ruled out</b> (<kbd>Alt+3</kbd>). Confirming a cause also confirms the effects between it and the primary effect.',

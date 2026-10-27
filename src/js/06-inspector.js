@@ -80,12 +80,13 @@ function renderRcaProperties(box) {
     <div class="section">
       <div class="panel-title">Keys</div>
       <dl class="keys">${tree ? `
-        <dt><kbd>Ins</kbd>, <kbd>Tab</kbd>, or <kbd>Alt+A</kbd></dt><dd>Add a cause to the selected effect</dd>
+        <dt><kbd>Tab</kbd>, <kbd>Ins</kbd>, or <kbd>Alt+A</kbd></dt><dd>Add a cause to the selected node</dd>
         <dt><kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Hypothesis, confirmed, ruled out</dd>` : `
-        <dt><kbd>Ins</kbd>, <kbd>Tab</kbd>, or <kbd>Alt+A</kbd></dt><dd>Add an action to the selected effect</dd>
-        <dt><kbd>Shift+Ins</kbd>, <kbd>Shift+Tab</kbd>, or <kbd>Alt+C</kbd></dt><dd>Add a condition</dd>`}
+        <dt><kbd>Tab</kbd>, <kbd>Ins</kbd>, or <kbd>Alt+A</kbd></dt><dd>Add an action to the selected node</dd>
+        <dt><kbd>Shift+Tab</kbd>, <kbd>Shift+Ins</kbd>, or <kbd>Alt+C</kbd></dt><dd>Add a condition</dd>`}
+        <dt><kbd>Enter</kbd></dt><dd>Add a sibling: a cause of the same effect, of the same kind</dd>
         <dt>Type</dt><dd>Replace the title; <kbd>Enter</kbd> finishes it</dd>
-        <dt><kbd>F2</kbd> or <kbd>Enter</kbd></dt><dd>Edit the title</dd>
+        <dt><kbd>F2</kbd></dt><dd>Edit the title</dd>
         <dt><kbd>←↑↓→</kbd></dt><dd>Select the neighbouring node</dd>
         <dt><kbd>Alt+M</kbd></dt><dd>Move the cause under another effect</dd>
         <dt><kbd>Alt+↑</kbd> <kbd>Alt+↓</kbd></dt><dd>Reorder among its siblings</dd>

@@ -273,10 +273,11 @@ With a node selected and no field focused:
 | Key | Result |
 |---|---|
 | Type | Replace the title: the first key starts the new one. **Enter** finishes it, back to the chart's keys; **Shift+Enter** starts a new line |
-| **Insert**, **Tab**, or **Alt+A** | Add an action cause; in a cause tree, a cause |
-| **Shift+Insert**, **Shift+Tab**, or **Alt+C** | Add a condition cause (Apollo) |
+| **Tab**, **Insert**, or **Alt+A** | Add an action cause of the selected node; in a cause tree, a cause. The new cause is selected: type to name it, or press Tab again to add its own cause |
+| **Shift+Tab**, **Shift+Insert**, or **Alt+C** | Add a condition cause (Apollo) |
+| **Enter** | Add a sibling: another cause of the same effect, of the same kind, just below the selected one |
 | **Alt+1** **Alt+2** **Alt+3** | Cause tree: set the status to hypothesis, confirmed, or ruled out |
-| **F2** or **Enter** | Edit the title, keeping it |
+| **F2** | Edit the title, keeping it |
 | **←** | Select the effect |
 | **→** | Select a cause; on a collapsed node, expand it |
 | **↑ ↓** | Select the node above or below in the same column |
@@ -290,7 +291,7 @@ With a node selected and no field focused:
 | **Esc** | Cancel linking, moving, or a drag; or clear the selection. In the title: undo what was typed since it was focused |
 | **Delete** | Delete the selected cause |
 
-With nothing selected, an arrow key selects the primary effect. Tab and Shift+Tab, and Alt+A and Alt+C, are there for laptops without an Insert key; Tab adds a cause only when no button or field has the focus, so it still moves through them. The commands that are letters or digits take Alt so that typing always goes to the title; on a Mac, Alt is Option.
+With nothing selected, an arrow key selects the primary effect. Adding a cause from a key keeps the keys on the chart, so **Tab**, type, **Enter**, **Enter**, type… builds a branch without the mouse: Enter first finishes the title, then adds a sibling. Editing starts only when you type. The **+ Action**, **+ Condition**, and **+ Cause** buttons put the new title ready to type. Tab adds a cause only when no button or field has the focus, so it still moves through them. The commands that are letters or digits take Alt so that typing always goes to the title; on a Mac, Alt is Option.
 
 All causes under one effect are joined by AND: each was needed. Every effect needs at least one action and at least one condition.
 

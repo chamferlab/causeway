@@ -217,7 +217,7 @@ window.addEventListener('keydown', e => {
     // Alt+A adds an action and Alt+C a condition; in a cause tree, Alt+A adds a cause.
     const kind = !e.shiftKey && (treeStyle() ? {a: 'cause'} : {a: 'action', c: 'condition'})[code];
     const status = treeStyle() && !e.shiftKey && {1: 'possible', 2: 'confirmed', 3: 'ruled-out'}[code];
-    if (kind) { e.preventDefault(); addCauseToSelected(kind); }
+    if (kind) { e.preventDefault(); addCauseToSelected(kind, false); }
     else if (status) { e.preventDefault(); setNodeStatus(status); }
     else if (code === 'l' && !e.shiftKey) { e.preventDefault(); startLinking(); }
     else if (code === 'm' && !e.shiftKey) { e.preventDefault(); startMoving(); }
@@ -225,11 +225,13 @@ window.addEventListener('keydown', e => {
     else if (code === 'o' && !e.shiftKey) { e.preventDefault(); alternativesSelected(); }
     return;
   }
-  // Insert or Tab adds an action, and Shift+Insert or Shift+Tab a condition; in a cause tree, a cause.
-  // Tab does this only with the focus on the page, so that it still moves through the buttons and fields.
+  // Tab or Insert adds a cause of the selected node: an action, or with Shift a condition; in a cause
+  // tree, a cause. Enter adds a sibling. Tab does this only with the focus on the page, so that it still
+  // moves through the buttons and fields. F2 edits the title.
   const onPage = [document.body, svg, null].includes(document.activeElement);
-  if (key === 'insert' || key === 'tab' && onPage) { e.preventDefault(); addCauseToSelected(e.shiftKey ? 'condition' : 'action'); }
-  else if (key === 'f2' || key === 'enter' && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); focusTitle(); }
+  if (key === 'insert' || key === 'tab' && onPage) { e.preventDefault(); addCauseToSelected(e.shiftKey ? 'condition' : 'action', false); }
+  else if (key === 'enter' && !e.shiftKey && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); addSiblingToSelected(); }
+  else if (key === 'f2') { e.preventDefault(); focusTitle(); }
   else if (key === 'delete') { e.preventDefault(); deleteSelected(); }
   else if (key === ' ' && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); toggleCollapse(); }
   // Any other character starts a new title: the title is focused and selected, and the key replaces it.

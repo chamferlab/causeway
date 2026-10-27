@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.20 — 2026-10-27
+
+Editing from the keyboard, as in a mind map, in both chart styles.
+
+- **Tab** adds a cause of the selected node (**Shift+Tab** a condition, in Apollo), and **Enter** a sibling: another cause of the same effect, of the same kind, just below. The new cause is selected, and the keys stay on the chart: **Tab, Tab** nests, and editing starts only when you type. Enter while typing finishes the title; Enter again adds the next sibling.
+- **F2** edits the title (Enter no longer does). Insert, Alt+A, and Alt+C add without editing too; the **+ Action**, **+ Condition**, and **+ Cause** buttons still put the new title ready to type.
+
 ## v1.19 — 2026-10-27
 
 Alternatives (OR) in Apollo, and Tab to add causes.

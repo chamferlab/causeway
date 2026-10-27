@@ -898,7 +898,7 @@ textarea.answer { font-size: 14px; font-weight: 600; min-height: 32px; resize: n
   <footer>
     <span id="status">Ready</span>
     <span id="count">0 causes · 0 evidence items</span>
-    <span class="keyhints" id="keyHints">Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Alt+O</kbd> alternatives (OR) · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete</span>
+    <span class="keyhints" id="keyHints">Type to rename · <kbd>Tab</kbd> action · <kbd>Shift+Tab</kbd> condition · <kbd>Enter</kbd> sibling · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Alt+O</kbd> alternatives (OR) · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete</span>
   </footer>
 </div>
 <dialog id="dialog" class="dialog"></dialog>
@@ -2544,8 +2544,8 @@ function renderStyle() {
   $('addActionName').textContent = tree ? '+ Cause' : '+ Action';
   $('addAction').title = tree ? 'Add a possible cause to the selected effect' : 'Add an action cause to the selected effect';
   $('keyHints').innerHTML = tree
-    ? 'Type to rename · <kbd>Ins</kbd> cause · <kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd> status · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete'
-    : 'Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Alt+O</kbd> alternatives (OR) · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete';
+    ? 'Type to rename · <kbd>Tab</kbd> cause · <kbd>Enter</kbd> sibling · <kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd> status · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete'
+    : 'Type to rename · <kbd>Tab</kbd> action · <kbd>Shift+Tab</kbd> condition · <kbd>Enter</kbd> sibling · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Alt+O</kbd> alternatives (OR) · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete';
 }
 
 function renderTitle() {
@@ -2636,12 +2636,13 @@ function renderRcaProperties(box) {
     <div class="section">
       <div class="panel-title">Keys</div>
       <dl class="keys">${tree ? `
-        <dt><kbd>Ins</kbd>, <kbd>Tab</kbd>, or <kbd>Alt+A</kbd></dt><dd>Add a cause to the selected effect</dd>
+        <dt><kbd>Tab</kbd>, <kbd>Ins</kbd>, or <kbd>Alt+A</kbd></dt><dd>Add a cause to the selected node</dd>
         <dt><kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Hypothesis, confirmed, ruled out</dd>` : `
-        <dt><kbd>Ins</kbd>, <kbd>Tab</kbd>, or <kbd>Alt+A</kbd></dt><dd>Add an action to the selected effect</dd>
-        <dt><kbd>Shift+Ins</kbd>, <kbd>Shift+Tab</kbd>, or <kbd>Alt+C</kbd></dt><dd>Add a condition</dd>`}
+        <dt><kbd>Tab</kbd>, <kbd>Ins</kbd>, or <kbd>Alt+A</kbd></dt><dd>Add an action to the selected node</dd>
+        <dt><kbd>Shift+Tab</kbd>, <kbd>Shift+Ins</kbd>, or <kbd>Alt+C</kbd></dt><dd>Add a condition</dd>`}
+        <dt><kbd>Enter</kbd></dt><dd>Add a sibling: a cause of the same effect, of the same kind</dd>
         <dt>Type</dt><dd>Replace the title; <kbd>Enter</kbd> finishes it</dd>
-        <dt><kbd>F2</kbd> or <kbd>Enter</kbd></dt><dd>Edit the title</dd>
+        <dt><kbd>F2</kbd></dt><dd>Edit the title</dd>
         <dt><kbd>←↑↓→</kbd></dt><dd>Select the neighbouring node</dd>
         <dt><kbd>Alt+M</kbd></dt><dd>Move the cause under another effect</dd>
         <dt><kbd>Alt+↑</kbd> <kbd>Alt+↓</kbd></dt><dd>Reorder among its siblings</dd>
@@ -2962,12 +2963,27 @@ $('issuesList').addEventListener('keydown', e => {
 
 // Edits on the chart.
 
-function addCauseToSelected(kind) {
+// From a button, the new cause's title is ready to type. From a key, the new cause is selected and the
+// keys stay on the chart, so that Tab and Enter can go on adding; typing starts its title.
+function addCauseToSelected(kind, edit = true) {
   if (!byId(selected)) return;
-  const n = addCause(selected, kind);
+  addedCause(addCause(selected, kind), edit);
+}
+// Enter: a cause beside the selected one, of the same kind, under the effect it is drawn under.
+function addSiblingToSelected() {
+  const n = byId(selected), effectId = layout.parent.get(selected);
+  if (!n) return;
+  if (!effectId) { setStatus('The primary effect has no siblings: Tab adds a cause'); return; }
+  const sibling = addCause(effectId, ['action', 'condition'].includes(n.kind) ? n.kind : 'action');
+  placeCause(effectId, sibling.id, n.id, true);
+  addedCause(sibling, false);
+}
+function addedCause(n, edit) {
   selected = n.id;
   render(); persist();
-  focusTitle();
+  if (edit) { focusTitle(); return; }
+  scrollToNode(n.id);
+  setStatus(`Added ${treeStyle() ? 'a cause' : `an ${KINDS[n.kind].name.toLowerCase()}`}: type to name it`);
 }
 
 // After adding a cause the title is selected, so typing replaces the placeholder.
@@ -3502,7 +3518,7 @@ window.addEventListener('keydown', e => {
     // Alt+A adds an action and Alt+C a condition; in a cause tree, Alt+A adds a cause.
     const kind = !e.shiftKey && (treeStyle() ? {a: 'cause'} : {a: 'action', c: 'condition'})[code];
     const status = treeStyle() && !e.shiftKey && {1: 'possible', 2: 'confirmed', 3: 'ruled-out'}[code];
-    if (kind) { e.preventDefault(); addCauseToSelected(kind); }
+    if (kind) { e.preventDefault(); addCauseToSelected(kind, false); }
     else if (status) { e.preventDefault(); setNodeStatus(status); }
     else if (code === 'l' && !e.shiftKey) { e.preventDefault(); startLinking(); }
     else if (code === 'm' && !e.shiftKey) { e.preventDefault(); startMoving(); }
@@ -3510,11 +3526,13 @@ window.addEventListener('keydown', e => {
     else if (code === 'o' && !e.shiftKey) { e.preventDefault(); alternativesSelected(); }
     return;
   }
-  // Insert or Tab adds an action, and Shift+Insert or Shift+Tab a condition; in a cause tree, a cause.
-  // Tab does this only with the focus on the page, so that it still moves through the buttons and fields.
+  // Tab or Insert adds a cause of the selected node: an action, or with Shift a condition; in a cause
+  // tree, a cause. Enter adds a sibling. Tab does this only with the focus on the page, so that it still
+  // moves through the buttons and fields. F2 edits the title.
   const onPage = [document.body, svg, null].includes(document.activeElement);
-  if (key === 'insert' || key === 'tab' && onPage) { e.preventDefault(); addCauseToSelected(e.shiftKey ? 'condition' : 'action'); }
-  else if (key === 'f2' || key === 'enter' && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); focusTitle(); }
+  if (key === 'insert' || key === 'tab' && onPage) { e.preventDefault(); addCauseToSelected(e.shiftKey ? 'condition' : 'action', false); }
+  else if (key === 'enter' && !e.shiftKey && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); addSiblingToSelected(); }
+  else if (key === 'f2') { e.preventDefault(); focusTitle(); }
   else if (key === 'delete') { e.preventDefault(); deleteSelected(); }
   else if (key === ' ' && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); toggleCollapse(); }
   // Any other character starts a new title: the title is focused and selected, and the key replaces it.
@@ -6087,7 +6105,7 @@ const GUIDES = {
     what: 'The core of the RCA. In the <b>Apollo</b> style, every effect has the causes that were all needed for it, joined by AND: at least one <b>action</b> (momentary, at a point in time) and one <b>condition</b> (it existed over time). Every cause is backed by evidence, and each branch ends at a <b>stop point</b>.',
     when: 'Throughout. Start it as soon as the primary effect is known, and add to it from the 5 Whys, the fishbone, and the timeline.',
     steps: [
-      'Select the primary effect and ask: what action, and what condition, were both needed for it? <b>+ Action</b> (<kbd>Ins</kbd>) and <b>+ Condition</b> (<kbd>Shift+Ins</kbd>) add them.',
+      'Select the primary effect and ask: what action, and what condition, were both needed for it? <b>+ Action</b> (<kbd>Tab</kbd>) and <b>+ Condition</b> (<kbd>Shift+Tab</kbd>) add them; <kbd>Enter</kbd> adds another beside the selected one. Type to name the new cause.',
       'Do the same for each cause, working left to right.',
       'Cite <b>evidence</b> on each cause from its properties. Without it, the cause shows an orange <b>?</b>.',
       'Where one cause supports several effects, <b>Link cause</b> (<kbd>Alt+L</kbd>) draws the second link.',
@@ -6178,7 +6196,7 @@ const GUIDE_TREE = {
   name: 'Cause tree',
   what: 'In the <b>cause tree</b> style, each effect has its possible causes, any of which may explain it. Each is a <b>hypothesis</b>, tested until it is <b>confirmed</b> or <b>ruled out</b>. A confirmed branch, drawn bold, leads to the root cause.',
   steps: [
-    'Select the primary effect and add its possible causes with <b>+ Cause</b> (<kbd>Ins</kbd>). Each starts as a hypothesis, <b>H</b>.',
+    'Select the primary effect and add its possible causes with <b>+ Cause</b> (<kbd>Tab</kbd>; <kbd>Enter</kbd> adds another beside it). Each starts as a hypothesis, <b>H</b>.',
     'Write in <b>How it is tested</b> the check that will confirm or rule it out.',
     'Run the test, add the result to the <b>evidence log</b>, and cite it on the cause.',
     'Set the status: <b>confirmed</b> (<kbd>Alt+2</kbd>) or <b>ruled out</b> (<kbd>Alt+3</kbd>). Confirming a cause also confirms the effects between it and the primary effect.',
