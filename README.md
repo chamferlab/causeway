@@ -31,6 +31,7 @@ Each has a guide: what the method is, when to use it, how to fill it in step by 
 | Dark teal box | **Action**: a momentary cause, at a point in time |
 | Light box with a teal border | **Condition**: a cause that existed over time |
 | **AND** on a connector | The causes joined there were all needed |
+| Dashed **OR** on a connector | Alternatives: one of the causes joined there was needed, and the evidence must still settle which |
 | Orange **?** | A cause with no evidence linked, or marked as an unverified candidate |
 | Dashed orange outline | An effect that lacks an action or a condition cause |
 | Double bar and **STOP** | A stop point |
@@ -81,10 +82,23 @@ One cause can support more than one effect. To chart that:
 **Drag a box** on the empty canvas to select the nodes it touches; each is outlined. **Ctrl+click** (**Cmd+click** on a Mac) adds one node or takes it out. A click on a node selects it alone. To pan, drag with the **right** or **middle** mouse button; the wheel zooms. With two or more selected, the properties panel lists them and acts on them all:
 
 - **Summary** (in the edit bar, or **Alt+G**): when several causes at the end of their branches may come from one deeper cause, a new cause shared by all of them goes to their right, drawn with a brace across them. Its title is ready to type, and it is tested like any other cause: confirming it confirms the causes it summarises. The causes must share an effect and have no causes of their own; they are put next to each other.
+- In Apollo, **Make them alternatives** (**Alt+O**): see below.
 - In a cause tree, set the **status** of them all (**Alt+1**, **Alt+2**, **Alt+3**).
 - **Delete** them all (**Del**), with the causes that only they support.
 
 A summary stays drawn with its brace while it is the only cause of its causes and they are neighbours under one effect. Once one of them gets another cause, it is drawn as a shared cause, with dashed links. To remove a summary, delete it. Summaries in XMind maps come in as summaries.
+
+## Alternatives (OR) in Apollo
+
+In Apollo, each cause of an effect was needed (AND). When the evidence cannot yet tell which of some causes it was, say dry running or faces installed out of square, make them **alternatives**: select them (drag a box, or Ctrl+click) and press **Alt+O**, or **Make them alternatives** in the properties. They are causes of the same effect.
+
+- They are drawn together on their own bracket, marked with a dashed **OR**, and joined to the effect's other causes by AND. Each is marked unverified (**?**).
+- For the rule that an effect needs an action and a condition, a group counts as an action only when each of its causes is an action, and as a condition only when each is a condition.
+- Each alternative shows the issue *One of N alternatives (OR): test them, and rule out all but one*. When one is verified (evidence, and not unverified), the others ask to be ruled out.
+- To settle the group, select the cause the evidence confirms and choose **Keep this one** in its properties: the others move to the causes ruled out, with their evidence and test. **Rule out** on one alternative works as usual; a group with one cause left is no longer a group.
+- **Alt+O** on one alternative, or **Not an alternative**, takes it out of its group: it was needed, with the others.
+- An RCA cannot be **closed** while a group is not settled, and the 8D report says so under *Not ready to close*. A root cause in an open group is listed with its alternatives, *One of: … (being tested)*.
+- Groups are saved in the file, on the links (`orGroup`), and copied with a branch. A cause tree has no groups: its branches are alternatives already, and switching to it and back keeps them.
 
 ## Move and reorder causes
 
@@ -259,13 +273,14 @@ With a node selected and no field focused:
 | Key | Result |
 |---|---|
 | Type | Replace the title: the first key starts the new one. **Enter** finishes it, back to the chart's keys; **Shift+Enter** starts a new line |
-| **Insert** or **Alt+A** | Add an action cause; in a cause tree, a cause |
-| **Shift+Insert** or **Alt+C** | Add a condition cause (Apollo) |
+| **Insert**, **Tab**, or **Alt+A** | Add an action cause; in a cause tree, a cause |
+| **Shift+Insert**, **Shift+Tab**, or **Alt+C** | Add a condition cause (Apollo) |
 | **Alt+1** **Alt+2** **Alt+3** | Cause tree: set the status to hypothesis, confirmed, or ruled out |
 | **F2** or **Enter** | Edit the title, keeping it |
 | **←** | Select the effect |
 | **→** | Select a cause; on a collapsed node, expand it |
 | **↑ ↓** | Select the node above or below in the same column |
+| **Alt+O** | Make the selected causes alternatives (OR); on one alternative, take it out of its group (Apollo) |
 | **Alt+M** | Move the cause under another effect |
 | **Alt+↑ Alt+↓** | Move the cause above or below its neighbour |
 | **Shift+↑ Shift+↓** | Move the cause up or down by hand, with its branch |
@@ -275,7 +290,7 @@ With a node selected and no field focused:
 | **Esc** | Cancel linking, moving, or a drag; or clear the selection. In the title: undo what was typed since it was focused |
 | **Delete** | Delete the selected cause |
 
-With nothing selected, an arrow key selects the primary effect. Alt+A and Alt+C are there for laptops without an Insert key. The commands that are letters or digits take Alt so that typing always goes to the title; on a Mac, Alt is Option.
+With nothing selected, an arrow key selects the primary effect. Tab and Shift+Tab, and Alt+A and Alt+C, are there for laptops without an Insert key; Tab adds a cause only when no button or field has the focus, so it still moves through them. The commands that are letters or digits take Alt so that typing always goes to the title; on a Mac, Alt is Option.
 
 All causes under one effect are joined by AND: each was needed. Every effect needs at least one action and at least one condition.
 

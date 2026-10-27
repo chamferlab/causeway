@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.19 — 2026-10-27
+
+Alternatives (OR) in Apollo, and Tab to add causes.
+
+- **Alternatives (OR)**: in Apollo, select causes of one effect and press **Alt+O** (or **Make them alternatives**) when the evidence cannot yet tell which of them it was. They are drawn on their own bracket with a dashed **OR**, joined to the other causes by AND, and marked unverified.
+- A group counts as the action, or the condition, an effect needs only when each of its causes is one. Each alternative carries an issue until all but one are ruled out.
+- **Keep this one** settles a group: the other alternatives move to the causes ruled out. **Rule out** on one works as usual, and a group with one cause left is no group. **Alt+O** on one alternative takes it out.
+- An RCA with a group not settled cannot be closed. Reports list a root cause in an open group with its alternatives. Groups are saved in the file and copied with a branch.
+- **Tab** adds an action, and **Shift+Tab** a condition, as **Insert** and **Shift+Insert** do; in a cause tree, Tab adds a cause. Tab does this only with the focus on the chart, so it still moves through buttons and fields.
+
 ## v1.18 — 2026-10-26
 
 Box selection, and summaries.

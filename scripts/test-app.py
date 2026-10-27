@@ -232,9 +232,19 @@ def run_tests(b):
     assert rca()['nodes'][-1]['kind'] == 'condition' and len(rca()['nodes']) == 20
     key('Delete')
     assert len(rca()['nodes']) == 19, 'Delete removes the selected cause'
-    click('undo'); click('undo'); click('undo'); click('undo')
+    select('Heat input from face friction and pump')
+    key('Tab')
+    assert rca()['nodes'][-1]['kind'] == 'action' and len(rca()['nodes']) == 20, 'Tab adds an action'
+    select('Heat input from face friction and pump')
+    key('Tab', shift=True)
+    assert rca()['nodes'][-1]['kind'] == 'condition' and len(rca()['nodes']) == 21, 'Shift+Tab adds a condition'
+    count = len(rca()['nodes'])
+    select('Heat input from face friction and pump')
+    b.js("document.getElementById('undo').focus();window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));return true")
+    assert len(rca()['nodes']) == count, 'Tab on a button moves the focus and adds nothing'
+    click('undo'); click('undo'); click('undo'); click('undo'); click('undo'); click('undo')
     assert rca() == before
-    print('PASS: Insert, Shift+Insert, Alt+C and Delete keys', flush=True)
+    print('PASS: Insert, Shift+Insert, Tab, Shift+Tab, Alt+C and Delete keys', flush=True)
 
     # Typing on a selected node replaces its title, even with letters that are commands with Alt.
     select('Heat input from face friction and pump')
@@ -1832,6 +1842,79 @@ def run_tests(b):
     assert braces() == 1, 'a summary is kept in the file'
     load(open_before)
     print('PASS: box selection, summaries, and acting on several causes', flush=True)
+
+    # ---- Alternatives (OR) in Apollo ----
+    def or_pills():
+        return b.js("return document.querySelectorAll('#chart .junction.or').length")
+
+    def issue_texts():
+        click('issuesButton')
+        texts = b.js('return [...document.querySelectorAll("#issuesList small")].map(s=>s.textContent)')
+        click('issuesButton')
+        return texts
+
+    def report_text(button):
+        b.js("window.print=()=>{};document.getElementById(arguments[0]).click();return true", [button])
+        return b.js("return document.getElementById('report').textContent")
+
+    click('newProject')
+    b.js('document.querySelector("#dialog [data-choice=apollo]").click();return true')
+    set_title('Seal leaks')
+    select('Seal leaks'); key('Insert'); set_title('Dry running')
+    select('Seal leaks'); key('Insert'); set_title('Wrong installation')
+    select('Seal leaks'); key('Insert', shift=True); set_title('Hot product')
+    before_or = rca()
+    box_select('Dry running', 'Wrong installation')
+    assert 'Make them alternatives' in b.js("return document.getElementById('properties').textContent")
+    key('o', alt=True)
+    groups = {l.get('orGroup') for l in rca()['links'] if l['effectId'] == node_id('Seal leaks') and l['causeId'] != node_id('Hot product')}
+    assert len(groups) == 1 and None not in groups, 'the two causes share one group'
+    assert node('Dry running')['unverified'] and node('Wrong installation')['unverified'], 'alternatives are unverified'
+    assert or_pills() == 1 and b.js("return document.querySelectorAll('#chart .junction:not(.or)').length") == 1, 'one OR, and the AND with the condition'
+    check_layout()
+    assert not any('Needs' in t for t in issue_texts()), 'a group of actions counts as the action'
+    assert issue_texts().count('One of 2 alternatives (OR): test them, and rule out all but one') == 2
+    assert '1 group of alternatives (OR) not settled' in report_text('print8d'), 'an open group stops the RCA closing'
+    assert 'One of 2 alternatives' in report_text('printFull'), 'the report lists the open group'
+    # A mixed group is neither an action nor a condition.
+    select('Wrong installation'); b.js('document.querySelector("#properties [data-kind=condition]").click();return true')
+    assert 'Needs an action cause' in issue_texts()
+    click('undo')
+    # The group is kept in the file, and a lone member is no group.
+    grouped = rca()
+    load(grouped)
+    assert or_pills() == 1, 'a group is kept in the file'
+    broken = rca()
+    for l in broken['links']:
+        if l['causeId'] == node_id('Wrong installation'): l.pop('orGroup', None)
+    load(broken)
+    assert or_pills() == 0 and not any(l.get('orGroup') for l in rca()['links']), 'a group of one is dropped on opening'
+    load(grouped)
+    # Alt+O on one member takes it out; Keep this one rules out the others.
+    select('Wrong installation'); key('o', alt=True)
+    assert or_pills() == 0 and not any(l.get('orGroup') for l in rca()['links'])
+    click('undo')
+    assert or_pills() == 1
+    select('Dry running')
+    assert 'Alternatives (OR) · one of 2' in b.js("return document.getElementById('properties').textContent")
+    click('inspKeep')
+    assert [r['cause'] for r in rca()['ruledOut']] == ['Wrong installation'] and or_pills() == 0, 'keeping one rules out the others'
+    assert not any(l.get('orGroup') for l in rca()['links']) and 'alternatives (OR) not settled' not in report_text('print8d')
+    click('undo')
+    assert or_pills() == 1 and not rca()['ruledOut']
+    # Ruling out one of two dissolves the group; no OR in a cause tree.
+    select('Wrong installation'); click('inspRuleOut')
+    assert or_pills() == 0 and not any(l.get('orGroup') for l in rca()['links'])
+    click('undo')
+    box_select('Dry running', 'Hot product')
+    key('o', alt=True)
+    assert len({l.get('orGroup') for l in rca()['links']} - {None}) == 1 and or_pills() == 1, 'regrouping takes the causes out of their old group'
+    click('undo')
+    assert rca()['links'] == grouped['links'], 'regrouping is one undo step'
+    load(before_or)
+    assert or_pills() == 0 and node('Dry running')['unverified'] is False
+    load(open_before)
+    print('PASS: alternatives (OR) in Apollo: grouping, drawing, rules, settling, and files', flush=True)
 
     # ---- Layout of other chart shapes ----
     SIBLING_GAP = 16  # as in 01-constants.js

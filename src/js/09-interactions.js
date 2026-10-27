@@ -222,10 +222,13 @@ window.addEventListener('keydown', e => {
     else if (code === 'l' && !e.shiftKey) { e.preventDefault(); startLinking(); }
     else if (code === 'm' && !e.shiftKey) { e.preventDefault(); startMoving(); }
     else if (code === 'g' && !e.shiftKey) { e.preventDefault(); summariseSelected(); }
+    else if (code === 'o' && !e.shiftKey) { e.preventDefault(); alternativesSelected(); }
     return;
   }
-  // Insert adds an action and Shift+Insert a condition; in a cause tree, Insert adds a cause.
-  if (key === 'insert') { e.preventDefault(); addCauseToSelected(e.shiftKey ? 'condition' : 'action'); }
+  // Insert or Tab adds an action, and Shift+Insert or Shift+Tab a condition; in a cause tree, a cause.
+  // Tab does this only with the focus on the page, so that it still moves through the buttons and fields.
+  const onPage = [document.body, svg, null].includes(document.activeElement);
+  if (key === 'insert' || key === 'tab' && onPage) { e.preventDefault(); addCauseToSelected(e.shiftKey ? 'condition' : 'action'); }
   else if (key === 'f2' || key === 'enter' && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); focusTitle(); }
   else if (key === 'delete') { e.preventDefault(); deleteSelected(); }
   else if (key === ' ' && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); toggleCollapse(); }

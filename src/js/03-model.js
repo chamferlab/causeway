@@ -65,7 +65,7 @@ function copyBranchData(id) {
   return {
     type: BRANCH_TYPE, rcaId: state.id, rootId: id,
     nodes: state.nodes.filter(n => ids.has(n.id)).map(n => JSON.parse(JSON.stringify(n))),
-    links: state.links.filter(l => ids.has(l.effectId) && ids.has(l.causeId)).map(({effectId, causeId}) => ({effectId, causeId})),
+    links: state.links.filter(l => ids.has(l.effectId) && ids.has(l.causeId)).map(({effectId, causeId, orGroup}) => ({effectId, causeId, ...orGroup && {orGroup}})),
   };
 }
 // The branch as an indented list of titles, for pasting into other programs, as text and as HTML.
@@ -102,12 +102,17 @@ function pasteBranchData(data, effectId) {
       offsetY: old !== data.rootId && Number.isFinite(n.offsetY) ? n.offsetY : 0});
   }
   addLink(effectId, ids.get(data.rootId));
-  for (const l of data.links) if (ids.has(l?.effectId) && ids.has(l?.causeId)) addLink(ids.get(l.effectId), ids.get(l.causeId));
+  const groups = new Map();
+  for (const l of data.links) {
+    const link = ids.has(l?.effectId) && ids.has(l?.causeId) && addLink(ids.get(l.effectId), ids.get(l.causeId));
+    if (link && typeof l.orGroup === 'string' && l.orGroup) link.orGroup = groups.get(l.orGroup) ?? groups.set(l.orGroup, uuid()).get(l.orGroup);
+  }
   // Nodes the links do not reach from the root are left out.
   const reached = new Set(branchIds(ids.get(data.rootId)));
   const stray = new Set([...ids.values()].filter(id => !reached.has(id)));
   state.nodes = state.nodes.filter(n => !stray.has(n.id));
   state.links = state.links.filter(l => !stray.has(l.effectId) && !stray.has(l.causeId));
+  tidyOrGroups();
   collapsed.delete(effectId);
   return {root: byId(ids.get(data.rootId)), count: reached.size, dropped};
 }
@@ -354,9 +359,11 @@ function deleteNodes(ids) {
   state.links = state.links.filter(l => !gone.has(l.effectId) && !gone.has(l.causeId));
   for (const s of state.solutions) s.causeIds = s.causeIds.filter(id => !gone.has(id));
   for (const id of gone) collapsed.delete(id);
+  tidyOrGroups();
 }
 function removeLink(linkId) {
   state.links = state.links.filter(l => l.id !== linkId);
+  tidyOrGroups();
 }
 
 // Moving a cause to another effect moves the one link it is drawn along, from `fromId`; its other
@@ -372,7 +379,9 @@ function moveCause(causeId, fromId, toId) {
   const link = state.links.find(l => l.effectId === fromId && l.causeId === causeId);
   state.links.splice(state.links.indexOf(link), 1);
   link.effectId = toId;
+  delete link.orGroup;
   state.links.push(link);
+  tidyOrGroups();
   byId(causeId).offsetY = 0;
   collapsed.delete(toId);
   return null;
@@ -416,6 +425,58 @@ function summariseCauses(ids, effectId) {
   state.nodes.push(n);
   for (const l of links) { addLink(l.causeId, n.id); byId(l.causeId).offsetY = 0; collapsed.delete(l.causeId); }
   return n;
+}
+
+// ---- Alternatives (OR) ----
+// In Apollo each cause of an effect was needed (AND). While the evidence cannot yet tell which of some
+// causes it was, they can be charted as alternatives: an OR group, any one of which, with the effect's
+// other causes, would explain it. The group is held on their links to the effect, as `orGroup`; the
+// group and the effect's other causes are joined by AND. It is settled by ruling out all but one, and
+// a group with one cause left is no group. A cause tree has none: its branches are alternatives already.
+
+// The effect's causes as AND units: a cause alone, or a group of alternatives, in link order.
+function causeUnits(effectId) {
+  const units = [], groups = new Map();
+  for (const l of causeLinks(effectId)) {
+    const c = byId(l.causeId);
+    if (!c) continue;
+    if (!l.orGroup || treeStyle()) { units.push([c]); continue; }
+    if (!groups.has(l.orGroup)) units.push(groups.set(l.orGroup, []).get(l.orGroup));
+    groups.get(l.orGroup).push(c);
+  }
+  return units;
+}
+const orGroupsOf = effectId => causeUnits(effectId).filter(u => u.length > 1);
+// The other causes in the cause's group under the effect.
+const alternativesOf = (effectId, causeId) => orGroupsOf(effectId).find(u => u.some(c => c.id === causeId))?.filter(c => c.id !== causeId) ?? [];
+const openOrGroups = () => treeStyle() ? [] : [...reachable()].flatMap(orGroupsOf);
+// A group needs two causes of one effect.
+function tidyOrGroups() {
+  const count = new Map(), key = l => l.effectId + ' ' + l.orGroup;
+  for (const l of state.links) if (l.orGroup) count.set(key(l), (count.get(key(l)) || 0) + 1);
+  for (const l of state.links) if (l.orGroup && count.get(key(l)) < 2) delete l.orGroup;
+}
+function alternativesProblem(ids, effectId) {
+  if (treeStyle()) return 'In a cause tree every branch is an alternative already.';
+  if (ids.length < 2) return 'Select two or more causes of one effect to make them alternatives: drag a box around them.';
+  if (ids.includes(state.problem.primaryEffectId)) return 'The primary effect cannot be an alternative.';
+  if (!effectId || ids.some(id => !state.links.some(l => l.effectId === effectId && l.causeId === id))) return 'Only causes of the same effect can be alternatives.';
+  return null;
+}
+// One new group, taking the causes out of any they were in. Their links are put together, where the
+// first of them is, and each is unverified until the evidence settles it.
+function makeAlternatives(ids, effectId) {
+  const members = new Set(ids), links = state.links.filter(l => l.effectId === effectId && members.has(l.causeId)), group = uuid();
+  const at = state.links.indexOf(links[0]);
+  state.links = state.links.filter(l => !links.includes(l));
+  state.links.splice(at, 0, ...links);
+  for (const l of links) { l.orGroup = group; byId(l.causeId).unverified = true; byId(l.causeId).offsetY = 0; }
+  tidyOrGroups();
+}
+function leaveAlternatives(effectId, causeId) {
+  const link = state.links.find(l => l.effectId === effectId && l.causeId === causeId);
+  if (link) delete link.orGroup;
+  tidyOrGroups();
 }
 
 // Expands every collapsed branch that hides the node. Returns whether anything changed.
@@ -595,7 +656,8 @@ function causeIssues() {
 function closeBlockers() {
   const live = state.actions.filter(a => a.status !== 'cancelled' && a.kind !== 'containment');
   const open = live.filter(a => a.status !== 'validated').length, bare = live.filter(a => a.status === 'validated' && !a.effectiveness.result.trim()).length;
-  return [!live.length && 'No corrective or preventive action in the plan', open && `${plural(open, 'action')} not validated by an effectiveness check`,
+  const alternatives = openOrGroups().length;
+  return [alternatives && `${plural(alternatives, 'group')} of alternatives (OR) not settled`, !live.length && 'No corrective or preventive action in the plan', open && `${plural(open, 'action')} not validated by an effectiveness check`,
     bare && `${plural(bare, 'validated action')} without an effectiveness result`].filter(Boolean);
 }
 
@@ -660,9 +722,17 @@ function apolloIssues() {
     const causes = causesOf(n.id);
     const isEffect = causes.length > 0 || n.kind === 'effect';
     if (isEffect) {
-      const missing = ['action', 'condition'].filter(kind => !causes.some(c => c.kind === kind));
+      // A group of alternatives counts as an action, or a condition, only when each of them is one.
+      const units = causeUnits(n.id), missing = ['action', 'condition'].filter(kind => !units.some(u => u.every(c => c.kind === kind)));
       if (missing.length) issues.push({nodeId: n.id, level: 'error', code: 'causal-set',
         text: `Needs ${missing.length === 2 ? 'an action and a condition' : missing[0] === 'action' ? 'an action' : 'a condition'} cause`});
+    }
+    // Alternatives are settled by ruling out all but one.
+    for (const group of orGroupsOf(n.id)) {
+      const verified = group.find(c => !needsEvidence(c));
+      for (const c of group) issues.push({nodeId: c.id, level: 'warning', code: 'alternatives', text: !verified
+        ? `One of ${group.length} alternatives (OR): test them, and rule out all but one`
+        : c === verified ? 'Verified: rule out its alternatives (Keep this one)' : `Its alternative "${verified.title}" is verified: rule this one out`});
     }
     if (isCause(n) && needsEvidence(n)) issues.push({nodeId: n.id, level: 'warning', code: 'evidence',
       text: n.unverified ? 'Marked unverified' : 'No evidence linked'});

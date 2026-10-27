@@ -95,9 +95,19 @@ function computeLayout() {
     children.get(l.effectId).push(byId(l.causeId));
   }
   // Within an effect, its actions come above its conditions, and causes without a type below them.
-  // In a cause tree, causes keep their order.
+  // Alternatives (OR) stay together, where the first of their kinds would go. In a cause tree, causes
+  // keep their order.
   const order = {action: 0, condition: 1, cause: 2, effect: 3};
-  if (!treeStyle()) for (const list of children.values()) list.sort((a, b) => order[a.kind] - order[b.kind]);
+  if (!treeStyle()) for (const [effectId, list] of children) {
+    const unit = new Map(), place = new Map(), first = new Map();
+    for (const l of links) if (l.effectId === effectId) unit.set(l.causeId, l.orGroup || l.causeId);
+    list.forEach((k, i) => {
+      const u = unit.get(k.id);
+      place.set(u, Math.min(place.get(u) ?? Infinity, order[k.kind]));
+      if (!first.has(u)) first.set(u, i);
+    });
+    list.sort((a, b) => place.get(unit.get(a.id)) - place.get(unit.get(b.id)) || first.get(unit.get(a.id)) - first.get(unit.get(b.id)));
+  }
 
   // Summaries drawn as such: {id, members}, the causes it is the only cause of, neighbours under one
   // effect, in their order. The summary is taken out of its first member's causes, and is placed with them.
@@ -227,11 +237,29 @@ function routeEdges(boxes, links, parent, rank, summaries) {
   }
   for (const [effectId, group] of groups) {
     const e = boxes.get(effectId), bx = e.x + e.w + COL_GAP / 2;
+    // Alternatives (OR) meet on a second bracket nearer the causes, marked OR where they join the first.
+    const alternatives = new Map();
+    if (!treeStyle()) for (const l of group) if (l.orGroup) alternatives.set(l.orGroup, [...alternatives.get(l.orGroup) || [], l]);
+    for (const [g, list] of alternatives) if (list.length < 2) alternatives.delete(g);
+    const ox = bx + 27, ors = [], inOr = new Set([...alternatives.values()].flat());
     const ys = group.map(l => midY(boxes.get(l.causeId)));
-    let d = `M ${e.x + e.w} ${midY(e)} H ${bx} M ${bx} ${Math.min(midY(e), ...ys)} V ${Math.max(midY(e), ...ys)}`;
-    for (const l of group) d += ` M ${bx} ${midY(boxes.get(l.causeId))} H ${boxes.get(l.causeId).x}`;
-    // Two or more causes under one effect are joined by AND, marked where the bracket meets the effect.
-    edges.push({d, shared: false, effectId, linkIds: group.map(l => l.id), junction: group.length > 1 ? {x: bx, y: midY(e)} : null,
+    let d = `M ${e.x + e.w} ${midY(e)} H ${bx}`;
+    const joins = [midY(e)];
+    for (const l of group) {
+      const c = boxes.get(l.causeId);
+      d += ` M ${inOr.has(l) ? ox : bx} ${midY(c)} H ${c.x}`;
+      if (!inOr.has(l)) joins.push(midY(c));
+    }
+    for (const list of alternatives.values()) {
+      const lys = list.map(l => midY(boxes.get(l.causeId))), top = Math.min(...lys), bottom = Math.max(...lys), y = (top + bottom) / 2;
+      d += ` M ${bx} ${y} H ${ox} M ${ox} ${top} V ${bottom}`;
+      joins.push(y); ors.push({x: ox, y});
+    }
+    d += ` M ${bx} ${Math.min(...joins)} V ${Math.max(...joins)}`;
+    // Two or more causes under one effect are joined by AND, marked where the bracket meets the effect;
+    // a group of alternatives is one of them.
+    const units = group.length - inOr.size + alternatives.size;
+    edges.push({d, shared: false, effectId, linkIds: group.map(l => l.id), junction: units > 1 ? {x: bx, y: midY(e)} : null, ors,
       from: {x: e.x + e.w, y: midY(e)}, bx, branches: group.map(l => ({id: l.causeId, x: boxes.get(l.causeId).x, y: midY(boxes.get(l.causeId))}))});
   }
 

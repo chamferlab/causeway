@@ -898,7 +898,7 @@ textarea.answer { font-size: 14px; font-weight: 600; min-height: 32px; resize: n
   <footer>
     <span id="status">Ready</span>
     <span id="count">0 causes · 0 evidence items</span>
-    <span class="keyhints" id="keyHints">Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete</span>
+    <span class="keyhints" id="keyHints">Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Alt+O</kbd> alternatives (OR) · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete</span>
   </footer>
 </div>
 <dialog id="dialog" class="dialog"></dialog>
@@ -1322,7 +1322,7 @@ function copyBranchData(id) {
   return {
     type: BRANCH_TYPE, rcaId: state.id, rootId: id,
     nodes: state.nodes.filter(n => ids.has(n.id)).map(n => JSON.parse(JSON.stringify(n))),
-    links: state.links.filter(l => ids.has(l.effectId) && ids.has(l.causeId)).map(({effectId, causeId}) => ({effectId, causeId})),
+    links: state.links.filter(l => ids.has(l.effectId) && ids.has(l.causeId)).map(({effectId, causeId, orGroup}) => ({effectId, causeId, ...orGroup && {orGroup}})),
   };
 }
 // The branch as an indented list of titles, for pasting into other programs, as text and as HTML.
@@ -1359,12 +1359,17 @@ function pasteBranchData(data, effectId) {
       offsetY: old !== data.rootId && Number.isFinite(n.offsetY) ? n.offsetY : 0});
   }
   addLink(effectId, ids.get(data.rootId));
-  for (const l of data.links) if (ids.has(l?.effectId) && ids.has(l?.causeId)) addLink(ids.get(l.effectId), ids.get(l.causeId));
+  const groups = new Map();
+  for (const l of data.links) {
+    const link = ids.has(l?.effectId) && ids.has(l?.causeId) && addLink(ids.get(l.effectId), ids.get(l.causeId));
+    if (link && typeof l.orGroup === 'string' && l.orGroup) link.orGroup = groups.get(l.orGroup) ?? groups.set(l.orGroup, uuid()).get(l.orGroup);
+  }
   // Nodes the links do not reach from the root are left out.
   const reached = new Set(branchIds(ids.get(data.rootId)));
   const stray = new Set([...ids.values()].filter(id => !reached.has(id)));
   state.nodes = state.nodes.filter(n => !stray.has(n.id));
   state.links = state.links.filter(l => !stray.has(l.effectId) && !stray.has(l.causeId));
+  tidyOrGroups();
   collapsed.delete(effectId);
   return {root: byId(ids.get(data.rootId)), count: reached.size, dropped};
 }
@@ -1611,9 +1616,11 @@ function deleteNodes(ids) {
   state.links = state.links.filter(l => !gone.has(l.effectId) && !gone.has(l.causeId));
   for (const s of state.solutions) s.causeIds = s.causeIds.filter(id => !gone.has(id));
   for (const id of gone) collapsed.delete(id);
+  tidyOrGroups();
 }
 function removeLink(linkId) {
   state.links = state.links.filter(l => l.id !== linkId);
+  tidyOrGroups();
 }
 
 // Moving a cause to another effect moves the one link it is drawn along, from `fromId`; its other
@@ -1629,7 +1636,9 @@ function moveCause(causeId, fromId, toId) {
   const link = state.links.find(l => l.effectId === fromId && l.causeId === causeId);
   state.links.splice(state.links.indexOf(link), 1);
   link.effectId = toId;
+  delete link.orGroup;
   state.links.push(link);
+  tidyOrGroups();
   byId(causeId).offsetY = 0;
   collapsed.delete(toId);
   return null;
@@ -1673,6 +1682,58 @@ function summariseCauses(ids, effectId) {
   state.nodes.push(n);
   for (const l of links) { addLink(l.causeId, n.id); byId(l.causeId).offsetY = 0; collapsed.delete(l.causeId); }
   return n;
+}
+
+// ---- Alternatives (OR) ----
+// In Apollo each cause of an effect was needed (AND). While the evidence cannot yet tell which of some
+// causes it was, they can be charted as alternatives: an OR group, any one of which, with the effect's
+// other causes, would explain it. The group is held on their links to the effect, as `orGroup`; the
+// group and the effect's other causes are joined by AND. It is settled by ruling out all but one, and
+// a group with one cause left is no group. A cause tree has none: its branches are alternatives already.
+
+// The effect's causes as AND units: a cause alone, or a group of alternatives, in link order.
+function causeUnits(effectId) {
+  const units = [], groups = new Map();
+  for (const l of causeLinks(effectId)) {
+    const c = byId(l.causeId);
+    if (!c) continue;
+    if (!l.orGroup || treeStyle()) { units.push([c]); continue; }
+    if (!groups.has(l.orGroup)) units.push(groups.set(l.orGroup, []).get(l.orGroup));
+    groups.get(l.orGroup).push(c);
+  }
+  return units;
+}
+const orGroupsOf = effectId => causeUnits(effectId).filter(u => u.length > 1);
+// The other causes in the cause's group under the effect.
+const alternativesOf = (effectId, causeId) => orGroupsOf(effectId).find(u => u.some(c => c.id === causeId))?.filter(c => c.id !== causeId) ?? [];
+const openOrGroups = () => treeStyle() ? [] : [...reachable()].flatMap(orGroupsOf);
+// A group needs two causes of one effect.
+function tidyOrGroups() {
+  const count = new Map(), key = l => l.effectId + ' ' + l.orGroup;
+  for (const l of state.links) if (l.orGroup) count.set(key(l), (count.get(key(l)) || 0) + 1);
+  for (const l of state.links) if (l.orGroup && count.get(key(l)) < 2) delete l.orGroup;
+}
+function alternativesProblem(ids, effectId) {
+  if (treeStyle()) return 'In a cause tree every branch is an alternative already.';
+  if (ids.length < 2) return 'Select two or more causes of one effect to make them alternatives: drag a box around them.';
+  if (ids.includes(state.problem.primaryEffectId)) return 'The primary effect cannot be an alternative.';
+  if (!effectId || ids.some(id => !state.links.some(l => l.effectId === effectId && l.causeId === id))) return 'Only causes of the same effect can be alternatives.';
+  return null;
+}
+// One new group, taking the causes out of any they were in. Their links are put together, where the
+// first of them is, and each is unverified until the evidence settles it.
+function makeAlternatives(ids, effectId) {
+  const members = new Set(ids), links = state.links.filter(l => l.effectId === effectId && members.has(l.causeId)), group = uuid();
+  const at = state.links.indexOf(links[0]);
+  state.links = state.links.filter(l => !links.includes(l));
+  state.links.splice(at, 0, ...links);
+  for (const l of links) { l.orGroup = group; byId(l.causeId).unverified = true; byId(l.causeId).offsetY = 0; }
+  tidyOrGroups();
+}
+function leaveAlternatives(effectId, causeId) {
+  const link = state.links.find(l => l.effectId === effectId && l.causeId === causeId);
+  if (link) delete link.orGroup;
+  tidyOrGroups();
 }
 
 // Expands every collapsed branch that hides the node. Returns whether anything changed.
@@ -1852,7 +1913,8 @@ function causeIssues() {
 function closeBlockers() {
   const live = state.actions.filter(a => a.status !== 'cancelled' && a.kind !== 'containment');
   const open = live.filter(a => a.status !== 'validated').length, bare = live.filter(a => a.status === 'validated' && !a.effectiveness.result.trim()).length;
-  return [!live.length && 'No corrective or preventive action in the plan', open && `${plural(open, 'action')} not validated by an effectiveness check`,
+  const alternatives = openOrGroups().length;
+  return [alternatives && `${plural(alternatives, 'group')} of alternatives (OR) not settled`, !live.length && 'No corrective or preventive action in the plan', open && `${plural(open, 'action')} not validated by an effectiveness check`,
     bare && `${plural(bare, 'validated action')} without an effectiveness result`].filter(Boolean);
 }
 
@@ -1917,9 +1979,17 @@ function apolloIssues() {
     const causes = causesOf(n.id);
     const isEffect = causes.length > 0 || n.kind === 'effect';
     if (isEffect) {
-      const missing = ['action', 'condition'].filter(kind => !causes.some(c => c.kind === kind));
+      // A group of alternatives counts as an action, or a condition, only when each of them is one.
+      const units = causeUnits(n.id), missing = ['action', 'condition'].filter(kind => !units.some(u => u.every(c => c.kind === kind)));
       if (missing.length) issues.push({nodeId: n.id, level: 'error', code: 'causal-set',
         text: `Needs ${missing.length === 2 ? 'an action and a condition' : missing[0] === 'action' ? 'an action' : 'a condition'} cause`});
+    }
+    // Alternatives are settled by ruling out all but one.
+    for (const group of orGroupsOf(n.id)) {
+      const verified = group.find(c => !needsEvidence(c));
+      for (const c of group) issues.push({nodeId: c.id, level: 'warning', code: 'alternatives', text: !verified
+        ? `One of ${group.length} alternatives (OR): test them, and rule out all but one`
+        : c === verified ? 'Verified: rule out its alternatives (Keep this one)' : `Its alternative "${verified.title}" is verified: rule this one out`});
     }
     if (isCause(n) && needsEvidence(n)) issues.push({nodeId: n.id, level: 'warning', code: 'evidence',
       text: n.unverified ? 'Marked unverified' : 'No evidence linked'});
@@ -2026,9 +2096,19 @@ function computeLayout() {
     children.get(l.effectId).push(byId(l.causeId));
   }
   // Within an effect, its actions come above its conditions, and causes without a type below them.
-  // In a cause tree, causes keep their order.
+  // Alternatives (OR) stay together, where the first of their kinds would go. In a cause tree, causes
+  // keep their order.
   const order = {action: 0, condition: 1, cause: 2, effect: 3};
-  if (!treeStyle()) for (const list of children.values()) list.sort((a, b) => order[a.kind] - order[b.kind]);
+  if (!treeStyle()) for (const [effectId, list] of children) {
+    const unit = new Map(), place = new Map(), first = new Map();
+    for (const l of links) if (l.effectId === effectId) unit.set(l.causeId, l.orGroup || l.causeId);
+    list.forEach((k, i) => {
+      const u = unit.get(k.id);
+      place.set(u, Math.min(place.get(u) ?? Infinity, order[k.kind]));
+      if (!first.has(u)) first.set(u, i);
+    });
+    list.sort((a, b) => place.get(unit.get(a.id)) - place.get(unit.get(b.id)) || first.get(unit.get(a.id)) - first.get(unit.get(b.id)));
+  }
 
   // Summaries drawn as such: {id, members}, the causes it is the only cause of, neighbours under one
   // effect, in their order. The summary is taken out of its first member's causes, and is placed with them.
@@ -2158,11 +2238,29 @@ function routeEdges(boxes, links, parent, rank, summaries) {
   }
   for (const [effectId, group] of groups) {
     const e = boxes.get(effectId), bx = e.x + e.w + COL_GAP / 2;
+    // Alternatives (OR) meet on a second bracket nearer the causes, marked OR where they join the first.
+    const alternatives = new Map();
+    if (!treeStyle()) for (const l of group) if (l.orGroup) alternatives.set(l.orGroup, [...alternatives.get(l.orGroup) || [], l]);
+    for (const [g, list] of alternatives) if (list.length < 2) alternatives.delete(g);
+    const ox = bx + 27, ors = [], inOr = new Set([...alternatives.values()].flat());
     const ys = group.map(l => midY(boxes.get(l.causeId)));
-    let d = `M ${e.x + e.w} ${midY(e)} H ${bx} M ${bx} ${Math.min(midY(e), ...ys)} V ${Math.max(midY(e), ...ys)}`;
-    for (const l of group) d += ` M ${bx} ${midY(boxes.get(l.causeId))} H ${boxes.get(l.causeId).x}`;
-    // Two or more causes under one effect are joined by AND, marked where the bracket meets the effect.
-    edges.push({d, shared: false, effectId, linkIds: group.map(l => l.id), junction: group.length > 1 ? {x: bx, y: midY(e)} : null,
+    let d = `M ${e.x + e.w} ${midY(e)} H ${bx}`;
+    const joins = [midY(e)];
+    for (const l of group) {
+      const c = boxes.get(l.causeId);
+      d += ` M ${inOr.has(l) ? ox : bx} ${midY(c)} H ${c.x}`;
+      if (!inOr.has(l)) joins.push(midY(c));
+    }
+    for (const list of alternatives.values()) {
+      const lys = list.map(l => midY(boxes.get(l.causeId))), top = Math.min(...lys), bottom = Math.max(...lys), y = (top + bottom) / 2;
+      d += ` M ${bx} ${y} H ${ox} M ${ox} ${top} V ${bottom}`;
+      joins.push(y); ors.push({x: ox, y});
+    }
+    d += ` M ${bx} ${Math.min(...joins)} V ${Math.max(...joins)}`;
+    // Two or more causes under one effect are joined by AND, marked where the bracket meets the effect;
+    // a group of alternatives is one of them.
+    const units = group.length - inOr.size + alternatives.size;
+    edges.push({d, shared: false, effectId, linkIds: group.map(l => l.id), junction: units > 1 ? {x: bx, y: midY(e)} : null, ors,
       from: {x: e.x + e.w, y: midY(e)}, bx, branches: group.map(l => ({id: l.causeId, x: boxes.get(l.causeId).x, y: midY(boxes.get(l.causeId))}))});
   }
 
@@ -2318,8 +2416,10 @@ function chartMarkup(l, opts = {}) {
   else for (const e of l.edges) {
     s += `<path class="edge${e.summary ? ' brace' : ''}" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${e.shared ? C.shared : C.wire}" stroke-width="1.6"${e.shared ? ' stroke-dasharray="6 4"' : ''}/>`;
   }
-  for (const e of l.edges) {
-    if (!e.junction || treeStyle()) continue;
+  // AND where an effect's causes meet; OR, dashed, where a group of alternatives joins them.
+  for (const e of treeStyle() ? [] : l.edges) {
+    for (const o of e.ors || []) s += `<g class="junction or"><rect x="${o.x - 11}" y="${o.y - 8}" width="22" height="16" rx="8" fill="${C.panel}" stroke="${C.wire}" stroke-width="1.5" stroke-dasharray="3 2"/><text x="${o.x}" y="${o.y + 3}" font-size="8.5" font-weight="800" letter-spacing="0.5" text-anchor="middle" fill="${C.junctionText}">OR</text></g>`;
+    if (!e.junction) continue;
     const {x, y} = e.junction;
     s += `<g class="junction"><rect x="${x - 16}" y="${y - 8}" width="32" height="16" rx="8" fill="${C.panel}" stroke="${C.wire}" stroke-width="1.5"/><text x="${x}" y="${y + 3}" font-size="8.5" font-weight="800" letter-spacing="0.5" text-anchor="middle" fill="${C.junctionText}">AND</text></g>`;
   }
@@ -2445,7 +2545,7 @@ function renderStyle() {
   $('addAction').title = tree ? 'Add a possible cause to the selected effect' : 'Add an action cause to the selected effect';
   $('keyHints').innerHTML = tree
     ? 'Type to rename · <kbd>Ins</kbd> cause · <kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd> status · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete'
-    : 'Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete';
+    : 'Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Alt+O</kbd> alternatives (OR) · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete';
 }
 
 function renderTitle() {
@@ -2475,6 +2575,7 @@ function renderProperties() {
 // Several nodes selected with Ctrl+click: group them, set their status, or delete them.
 function renderSelectionProperties(box, ids) {
   const nodes = ids.map(byId), tree = treeStyle(), problem = summaryProblem(ids, layout.parent.get(selected)), causes = nodes.filter(isCause);
+  const orProblem = alternativesProblem(ids, layout.parent.get(selected));
   box.innerHTML = `
     <div class="kind-row"><span class="kind-chip action">${ids.length} SELECTED</span><span class="muted">Ctrl+click adds or takes out one</span></div>
     <ul class="cause-list">${nodes.map(n => `<li><button data-goto="${n.id}">${swatch(n)}${escapeHtml(n.title)}</button></li>`).join('')}</ul>
@@ -2484,6 +2585,12 @@ function renderSelectionProperties(box, ids) {
       <button class="button block" id="inspSummarise" ${problem ? 'disabled' : ''} title="Alt+G">Add a summary</button>
       ${problem ? `<p class="note">${escapeHtml(problem)}</p>` : ''}
     </div>
+    ${tree ? '' : `<div class="section">
+      <div class="panel-title">Alternatives (OR)</div>
+      <p class="note" style="margin-top:0">One of them caused the effect, but the evidence cannot yet tell which. They are marked unverified until all but one are ruled out.</p>
+      <button class="button block" id="inspAlternatives" ${orProblem ? 'disabled' : ''} title="Alt+O">Make them alternatives</button>
+      ${orProblem ? `<p class="note">${escapeHtml(orProblem)}</p>` : ''}
+    </div>`}
     ${tree && causes.length ? `<div class="section"><div class="panel-title">Status of ${plural(causes.length, 'cause')}</div>
       <div class="segmented status" role="group" aria-label="Status">${Object.entries(STATUSES).map(([k, st], i) =>
       `<button data-status="${k}" class="${k}" ${pressed(causes.every(c => c.status === k))} title="${st.name} (Alt+${i + 1})">${st.mark} ${st.name}</button>`).join('')}</div></div>` : ''}
@@ -2491,6 +2598,7 @@ function renderSelectionProperties(box, ids) {
   box.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => { select(b.dataset.goto); scrollToNode(b.dataset.goto); });
   box.querySelectorAll('[data-status]').forEach(b => b.onclick = () => setNodeStatus(b.dataset.status));
   $('inspSummarise').onclick = summariseSelected;
+  if ($('inspAlternatives')) $('inspAlternatives').onclick = alternativesSelected;
   if ($('inspDelete')) $('inspDelete').onclick = deleteSelected;
 }
 
@@ -2528,10 +2636,10 @@ function renderRcaProperties(box) {
     <div class="section">
       <div class="panel-title">Keys</div>
       <dl class="keys">${tree ? `
-        <dt><kbd>Ins</kbd> or <kbd>Alt+A</kbd></dt><dd>Add a cause to the selected effect</dd>
+        <dt><kbd>Ins</kbd>, <kbd>Tab</kbd>, or <kbd>Alt+A</kbd></dt><dd>Add a cause to the selected effect</dd>
         <dt><kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Hypothesis, confirmed, ruled out</dd>` : `
-        <dt><kbd>Ins</kbd> or <kbd>Alt+A</kbd></dt><dd>Add an action to the selected effect</dd>
-        <dt><kbd>Shift+Ins</kbd> or <kbd>Alt+C</kbd></dt><dd>Add a condition</dd>`}
+        <dt><kbd>Ins</kbd>, <kbd>Tab</kbd>, or <kbd>Alt+A</kbd></dt><dd>Add an action to the selected effect</dd>
+        <dt><kbd>Shift+Ins</kbd>, <kbd>Shift+Tab</kbd>, or <kbd>Alt+C</kbd></dt><dd>Add a condition</dd>`}
         <dt>Type</dt><dd>Replace the title; <kbd>Enter</kbd> finishes it</dd>
         <dt><kbd>F2</kbd> or <kbd>Enter</kbd></dt><dd>Edit the title</dd>
         <dt><kbd>←↑↓→</kbd></dt><dd>Select the neighbouring node</dd>
@@ -2542,7 +2650,8 @@ function renderRcaProperties(box) {
         <dt><kbd>Shift+↑</kbd> <kbd>Shift+↓</kbd></dt><dd>Move the cause up or down, with its branch; or Shift+drag it</dd>
         <dt><kbd>Alt+L</kbd></dt><dd>Link an existing node as a cause</dd>
         <dt>Drag on the canvas</dt><dd>Select the nodes in the box. <kbd>Ctrl+click</kbd> adds or takes out one</dd>
-        <dt><kbd>Alt+G</kbd></dt><dd>Add a summary: one cause shared by the selected causes</dd>
+        <dt><kbd>Alt+G</kbd></dt><dd>Add a summary: one cause shared by the selected causes</dd>${tree ? '' : `
+        <dt><kbd>Alt+O</kbd></dt><dd>Make the selected causes alternatives (OR); on one of them, take it out</dd>`}
         <dt>Right-drag, wheel</dt><dd>Pan, zoom</dd>
         <dt><kbd>Space</kbd></dt><dd>Collapse or expand the branch</dd>
         <dt><kbd>Esc</kbd></dt><dd>Cancel linking, moving, or a drag; or clear the selection. In the title: undo what was typed</dd>
@@ -2567,6 +2676,7 @@ function renderNodeProperties(box, n) {
   const evidence = n.evidenceIds.map(evidenceById).filter(Boolean);
   const solutions = solutionsOf(n.id);
   const tree = treeStyle();
+  const alternatives = tree || isPrimary ? [] : alternativesOf(layout.parent.get(n.id), n.id);
   const kindName = isPrimary ? 'Primary effect' : tree ? {possible: 'Hypothesis', confirmed: 'Confirmed cause', 'ruled-out': 'Ruled out'}[n.status] : KINDS[n.kind].name;
   const about = [causes.length && !isPrimary ? 'also an effect' : '', causes.length ? `${causes.length} cause${causes.length > 1 ? 's' : ''}` : '',
     layout.summaries.some(x => x.id === n.id) ? `summary of ${effects.length} causes` : effects.length > 1 ? `supports ${effects.length} effects` : ''].filter(Boolean).join(' · ');
@@ -2590,6 +2700,15 @@ function renderNodeProperties(box, n) {
     <div class="segmented cause-type" role="group" aria-label="Root cause type">${Object.entries(CAUSE_TYPES).map(([k, t]) =>
       `<button data-cause-type="${k}" ${pressed(n.causeType === k)} title="${t.about}${n.causeType === k ? '. Click again to clear' : ''}">${t.name}</button>`).join('')}</div>`}
     ${n.stopPoint ? `<label class="field" for="nodeStopReason">Why the branch stops</label><select class="text" id="nodeStopReason">${Object.entries(STOP_REASONS).map(([k, v]) => `<option value="${k}" ${n.stopPoint.reason === k ? 'selected' : ''}>${v}</option>`).join('')}</select>` : ''}
+    ${alternatives.length ? `<div class="section">
+      <div class="panel-title">Alternatives (OR) · one of ${alternatives.length + 1}</div>
+      <p class="note" style="margin-top:0">This or one of these caused the effect; the evidence must settle which.</p>
+      <ul class="cause-list">${alternatives.map(c => `<li><button data-goto="${c.id}">${swatch(c)}${escapeHtml(c.title)}</button></li>`).join('')}</ul>
+      <div class="button-grid">
+        <button class="button" id="inspKeep" title="Move the other alternatives to the causes ruled out">Keep this one</button>
+        <button class="button" id="inspLeave" title="It was needed, with the other causes (AND) (Alt+O)">Not an alternative</button>
+      </div>
+    </div>` : ''}
 
     <div class="section">
       <div class="section-head"><div class="panel-title">Evidence · ${evidence.length} cited</div></div>
@@ -2609,8 +2728,8 @@ function renderNodeProperties(box, n) {
       <div class="panel-title">${isPrimary ? 'Causes' : 'Causes of this effect'}</div>
       ${causes.length ? `<ul class="cause-list">${causes.map(c => `<li><button data-goto="${c.id}">${swatch(c)}${escapeHtml(c.title)}</button></li>`).join('')}</ul>` : '<p class="note" style="margin-top:0">No causes yet.</p>'}
       <div class="button-grid">
-        ${tree ? '<button class="button" id="inspAddAction" title="Insert or A">+ Cause</button>' : `<button class="button" id="inspAddAction" title="Insert or A">+ Action</button>
-        <button class="button" id="inspAddCondition" title="Shift+Insert or C">+ Condition</button>`}
+        ${tree ? '<button class="button" id="inspAddAction" title="Insert, Tab, or Alt+A">+ Cause</button>' : `<button class="button" id="inspAddAction" title="Insert, Tab, or Alt+A">+ Action</button>
+        <button class="button" id="inspAddCondition" title="Shift+Insert, Shift+Tab, or Alt+C">+ Condition</button>`}
         <button class="button" id="inspLink" title="Link a node already on the chart as a further cause (Alt+L)">Link existing</button>
         ${causes.length ? `<button class="button" id="inspCollapse" title="Space">${collapsed.has(n.id) ? 'Expand branch' : 'Collapse branch'}</button>` : ''}
         <button class="button" id="inspCopy" title="Copy this node and every cause under it (Ctrl+C)">Copy branch</button>
@@ -2653,6 +2772,8 @@ function renderNodeProperties(box, n) {
     e.preventDefault(); e.stopPropagation();
     if (n.title !== titleBefore) restoreHistory(); else e.target.blur();
   };
+  if ($('inspKeep')) $('inspKeep').onclick = keepAlternative;
+  if ($('inspLeave')) $('inspLeave').onclick = alternativesSelected;
   if ($('nodeTest')) $('nodeTest').oninput = e => { n.test = e.target.value; persist('test:' + n.id); };
   box.querySelectorAll('[data-status]').forEach(b => b.onclick = () => setNodeStatus(b.dataset.status));
   $('nodeDescription').oninput = e => { n.description = e.target.value; persist('description:' + n.id); };
@@ -2891,7 +3012,7 @@ function selectMany(ids) {
   picked = new Set(ids.length > 1 ? ids : []);
   selected = ids.at(-1) ?? null;
   render();
-  if (picked.size > 1) setStatus(`${plural(picked.size, 'node')} selected${summaryProblem(ids, layout.parent.get(selected)) ? '' : ': Alt+G gives them a summary'}`);
+  if (picked.size > 1) setStatus(`${plural(picked.size, 'node')} selected${summaryProblem(ids, layout.parent.get(selected)) ? '' : ': Alt+G gives them a summary'}${alternativesProblem(ids, layout.parent.get(selected)) ? '' : ', Alt+O makes them alternatives (OR)'}`);
 }
 function togglePicked(id) {
   const ids = selection();
@@ -2919,15 +3040,47 @@ function ruleOutSelected() {
   if (treeStyle()) { setNodeStatus('ruled-out'); return; }
   const ids = deletionSet(n.id), others = ids.length - 1;
   if (others && !confirm(`Rule out "${n.title}"? The ${others} cause${others > 1 ? 's' : ''} that only it supports will be deleted.`)) return;
-  const r = {id: uuid(), cause: n.title, kind: ['action', 'condition'].includes(n.kind) ? n.kind : '', test: n.test, evidenceIds: [...n.evidenceIds], status: 'ruled-out'};
-  state.ruledOut.push(r);
-  // A fishbone cause that was this node is now this ruled-out cause.
-  for (const c of fishCauses()) if (c.nodeId === n.id) Object.assign(c, {nodeId: null, ruledOutId: r.id});
   const effect = effectsOf(n.id)[0];
+  toRuledOut(n);
   deleteNodes(ids);
   selected = effect?.id ?? null;
   render(); persist();
   setStatus(`Moved "${n.title}" to the causes ruled out`);
+}
+// The ruled-out record of a node about to be deleted.
+function toRuledOut(n) {
+  const r = {id: uuid(), cause: n.title, kind: ['action', 'condition'].includes(n.kind) ? n.kind : '', test: n.test, evidenceIds: [...n.evidenceIds], status: 'ruled-out'};
+  state.ruledOut.push(r);
+  // A fishbone cause that was this node is now this ruled-out cause.
+  for (const c of fishCauses()) if (c.nodeId === n.id) Object.assign(c, {nodeId: null, ruledOutId: r.id});
+}
+
+// ---- Alternatives (OR) ----
+// Alt+O: the selected causes become alternatives, one of which caused their effect; with one of them
+// selected, Alt+O takes it out of its group. Keep this one rules out the others.
+function alternativesSelected() {
+  const ids = selection(), effectId = layout.parent.get(selected);
+  if (ids.length === 1 && alternativesOf(effectId, selected).length) {
+    leaveAlternatives(effectId, selected);
+    render(); persist();
+    setStatus(`"${byId(selected).title}" is no longer an alternative: it was needed, with the other causes (AND)`);
+    return;
+  }
+  const problem = alternativesProblem(ids, effectId);
+  if (problem) { setStatus(problem); return; }
+  makeAlternatives(ids, effectId);
+  render(); persist();
+  setStatus(`${plural(ids.length, 'alternative')} (OR), marked unverified: test them, and rule out all but one`);
+}
+function keepAlternative() {
+  const n = byId(selected), effectId = layout.parent.get(selected), others = alternativesOf(effectId, selected);
+  if (!n || !others.length) return;
+  const ids = deletionSet(...others.map(c => c.id)), more = ids.length - others.length;
+  if (!confirm(`Keep "${n.title}" and move ${others.length === 1 ? `"${others[0].title}"` : plural(others.length, 'alternative')} to the causes ruled out?${more ? ` The ${plural(more, 'cause')} that only they support will be deleted.` : ''}`)) return;
+  for (const c of others) toRuledOut(c);
+  deleteNodes(ids);
+  render(); persist();
+  setStatus(`Kept "${n.title}": ${plural(others.length, 'alternative')} moved to the causes ruled out`);
 }
 
 // A cause tree: Alt+1, Alt+2, and Alt+3 set the status of the selected causes. A confirmed cause happened,
@@ -3354,10 +3507,13 @@ window.addEventListener('keydown', e => {
     else if (code === 'l' && !e.shiftKey) { e.preventDefault(); startLinking(); }
     else if (code === 'm' && !e.shiftKey) { e.preventDefault(); startMoving(); }
     else if (code === 'g' && !e.shiftKey) { e.preventDefault(); summariseSelected(); }
+    else if (code === 'o' && !e.shiftKey) { e.preventDefault(); alternativesSelected(); }
     return;
   }
-  // Insert adds an action and Shift+Insert a condition; in a cause tree, Insert adds a cause.
-  if (key === 'insert') { e.preventDefault(); addCauseToSelected(e.shiftKey ? 'condition' : 'action'); }
+  // Insert or Tab adds an action, and Shift+Insert or Shift+Tab a condition; in a cause tree, a cause.
+  // Tab does this only with the focus on the page, so that it still moves through the buttons and fields.
+  const onPage = [document.body, svg, null].includes(document.activeElement);
+  if (key === 'insert' || key === 'tab' && onPage) { e.preventDefault(); addCauseToSelected(e.shiftKey ? 'condition' : 'action'); }
   else if (key === 'f2' || key === 'enter' && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); focusTitle(); }
   else if (key === 'delete') { e.preventDefault(); deleteSelected(); }
   else if (key === ' ' && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); toggleCollapse(); }
@@ -3527,7 +3683,10 @@ function normalizeProject(p) {
   const previous = state;
   state = {...s, links: []};
   try {
-    for (const l of p.links) if (byId(l?.effectId) && byId(l?.causeId) && !linkProblem(l.effectId, l.causeId)) state.links.push({id: l.id || uuid(), effectId: l.effectId, causeId: l.causeId});
+    for (const l of p.links) if (byId(l?.effectId) && byId(l?.causeId) && !linkProblem(l.effectId, l.causeId))
+      state.links.push({id: l.id || uuid(), effectId: l.effectId, causeId: l.causeId, ...typeof l.orGroup === 'string' && l.orGroup && {orGroup: l.orGroup}});
+    // A group of alternatives with one cause left is none.
+    tidyOrGroups();
     return {...state};
   } finally { state = previous; }
 }
@@ -5128,6 +5287,11 @@ function rootCauses() {
   const live = reachable();
   return state.nodes.filter(n => live.has(n.id) && isCause(n) && !isRuledOut(n) && (n.causeType || n.stopPoint?.reason === 'solution-found'));
 }
+// A root cause that is one of alternatives not yet settled says so, with the others.
+function orNote(n) {
+  const effect = effectsOf(n.id).find(e => alternativesOf(e.id, n.id).length);
+  return effect ? `One of: ${[n, ...alternativesOf(effect.id, n.id)].map(c => c.title).join(' / ')} (being tested)` : '';
+}
 // A cause's chain up to the primary effect, along its first effect.
 function causeChain(n) {
   const chain = [n], seen = new Set([n.id]);
@@ -5174,7 +5338,7 @@ function fullReport() {
       <h2>${treeStyle() ? 'Cause tree' : 'Cause-and-effect chart'}</h2>
       <p class="r-legend">${treeStyle()
         ? 'Read left to right: each effect, then its possible causes. Red: primary effect. Solid teal, with a bold link: confirmed. White, dashed, H: hypothesis, still to test. Grey, struck through, ✕: ruled out. E-codes: evidence. Orange badge: no evidence. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'
-        : 'Read left to right: each effect, then the causes that were all needed for it (AND). Red: primary effect. Dark: action. Light: condition. E-codes: evidence. ?: no evidence or unverified. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'}</p>
+        : 'Read left to right: each effect, then the causes that were all needed for it (AND). OR, dashed: alternatives, one of which was needed, still to settle. Red: primary effect. Dark: action. Light: condition. E-codes: evidence. ?: no evidence or unverified. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'}</p>
       ${chartFigures().join('')}
       ${issues.length ? `<h3>Open rule issues</h3><ul>${issues.map(i => `<li class="${i.level === 'error' ? 'r-issue-error' : ''}">${escapeHtml(issueTitle(i))}: ${escapeHtml(i.text)}</li>`).join('')}</ul>` : ''}
     </section>
@@ -5270,7 +5434,7 @@ function report8D() {
         <td>${rText(r.is)}</td><td>${rText(r.isNot)}</td><td>${rText(r.distinction)}</td><td>${rText(r.change)}</td></tr>`), '')}` : ''}`)}
     ${d(3, 'Containment actions', rTable(ACTION_HEADS, actionRows(actionsOfKind('containment')), 'No containment actions recorded.'))}
     ${d(4, 'Root causes', `${groups.length ? groups.map(([t, list]) => `<h3>${t.name}${t.about ? ` <span class="r-sub">${t.about.toLowerCase()}</span>` : ''}</h3>
-        ${rTable(['Root cause', 'How it was verified', 'Evidence', 'Chain to the problem'], list.map(n => `<tr><td><b>${escapeHtml(n.title)}</b></td><td>${rText(n.test)}</td>
+        ${rTable(['Root cause', 'How it was verified', 'Evidence', 'Chain to the problem'], list.map(n => `<tr><td><b>${escapeHtml(n.title)}</b>${orNote(n) ? `<small class="r-tags">${escapeHtml(orNote(n))}</small>` : ''}</td><td>${rText(n.test)}</td>
           <td>${n.evidenceIds.map(evidenceById).filter(Boolean).map(ev => `<span class="r-code">${escapeHtml(ev.code)}</span> ${escapeHtml(ev.description)}`).join('\n') || '—'}</td>
           <td class="r-chain">${causeChain(n).slice(1).map(x => escapeHtml(shorten(x.title, 60))).join(' → ')}</td></tr>`), '')}`).join('')
       : '<p class="r-none">No root cause identified yet: give the causes a root cause type, or a stop point “Effective solution found”.</p>'}
@@ -5307,7 +5471,7 @@ function reportSummary() {
       <div class="r-block"><h3>The problem</h3>
       <dl class="r-list">${key.map(([k, v]) => rItem(k, v)).join('')}${impact.map(([k, v]) => rItem(k, v)).join('')}</dl></div>
       <div class="r-block"><h3>Root causes</h3>
-      ${roots.length ? `<ul class="r-roots">${roots.map(n => `<li><b>${escapeHtml(n.title)}</b>${n.causeType ? ` <span class="r-tagline">${CAUSE_TYPES[n.causeType].name}</span>` : ''}
+      ${roots.length ? `<ul class="r-roots">${roots.map(n => `<li><b>${escapeHtml(n.title)}</b>${n.causeType ? ` <span class="r-tagline">${CAUSE_TYPES[n.causeType].name}</span>` : ''}${orNote(n) ? `<div class="r-chain">${escapeHtml(orNote(n))}</div>` : ''}
         ${chain(n).length ? `<div class="r-chain">→ ${chain(n).join(' → ')}</div>` : ''}</li>`).join('')}</ul>` : '<p class="r-none">Not identified yet.</p>'}</div>
       <div class="r-block"><h3>Actions</h3>
       ${rTable(['Action', 'Kind', 'Owner', 'Due', 'Status', 'Did it work?'], live.map(a => `<tr><td>${rText(a.action)}</td><td>${ACTION_KINDS[a.kind]}${ACTION_STRENGTH[a.strength] ? '\n' + ACTION_STRENGTH[a.strength] : ''}</td>
@@ -5929,6 +6093,7 @@ const GUIDES = {
       'Where one cause supports several effects, <b>Link cause</b> (<kbd>Alt+L</kbd>) draws the second link.',
       'End each branch with a <b>stop point</b> and its reason. Tick <b>Controllable</b> on causes you can change, and give root causes their <b>type</b>: occurrence, escape point, or systemic.',
       'Rule out what the evidence disproves with <b>Rule out</b>; it moves to the causes ruled out.',
+      'When the evidence cannot yet tell which of some causes it was, select them and press <kbd>Alt+O</kbd>: they become <b>alternatives</b>, joined by a dashed <b>OR</b>. Test them, then choose <b>Keep this one</b> on the cause the evidence confirms; the others are ruled out.',
     ],
     tips: [
       'An effect with only an action, or only a condition, is incomplete: the chart outlines it.',

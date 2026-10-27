@@ -19,6 +19,7 @@ function renderProperties() {
 // Several nodes selected with Ctrl+click: group them, set their status, or delete them.
 function renderSelectionProperties(box, ids) {
   const nodes = ids.map(byId), tree = treeStyle(), problem = summaryProblem(ids, layout.parent.get(selected)), causes = nodes.filter(isCause);
+  const orProblem = alternativesProblem(ids, layout.parent.get(selected));
   box.innerHTML = `
     <div class="kind-row"><span class="kind-chip action">${ids.length} SELECTED</span><span class="muted">Ctrl+click adds or takes out one</span></div>
     <ul class="cause-list">${nodes.map(n => `<li><button data-goto="${n.id}">${swatch(n)}${escapeHtml(n.title)}</button></li>`).join('')}</ul>
@@ -28,6 +29,12 @@ function renderSelectionProperties(box, ids) {
       <button class="button block" id="inspSummarise" ${problem ? 'disabled' : ''} title="Alt+G">Add a summary</button>
       ${problem ? `<p class="note">${escapeHtml(problem)}</p>` : ''}
     </div>
+    ${tree ? '' : `<div class="section">
+      <div class="panel-title">Alternatives (OR)</div>
+      <p class="note" style="margin-top:0">One of them caused the effect, but the evidence cannot yet tell which. They are marked unverified until all but one are ruled out.</p>
+      <button class="button block" id="inspAlternatives" ${orProblem ? 'disabled' : ''} title="Alt+O">Make them alternatives</button>
+      ${orProblem ? `<p class="note">${escapeHtml(orProblem)}</p>` : ''}
+    </div>`}
     ${tree && causes.length ? `<div class="section"><div class="panel-title">Status of ${plural(causes.length, 'cause')}</div>
       <div class="segmented status" role="group" aria-label="Status">${Object.entries(STATUSES).map(([k, st], i) =>
       `<button data-status="${k}" class="${k}" ${pressed(causes.every(c => c.status === k))} title="${st.name} (Alt+${i + 1})">${st.mark} ${st.name}</button>`).join('')}</div></div>` : ''}
@@ -35,6 +42,7 @@ function renderSelectionProperties(box, ids) {
   box.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => { select(b.dataset.goto); scrollToNode(b.dataset.goto); });
   box.querySelectorAll('[data-status]').forEach(b => b.onclick = () => setNodeStatus(b.dataset.status));
   $('inspSummarise').onclick = summariseSelected;
+  if ($('inspAlternatives')) $('inspAlternatives').onclick = alternativesSelected;
   if ($('inspDelete')) $('inspDelete').onclick = deleteSelected;
 }
 
@@ -72,10 +80,10 @@ function renderRcaProperties(box) {
     <div class="section">
       <div class="panel-title">Keys</div>
       <dl class="keys">${tree ? `
-        <dt><kbd>Ins</kbd> or <kbd>Alt+A</kbd></dt><dd>Add a cause to the selected effect</dd>
+        <dt><kbd>Ins</kbd>, <kbd>Tab</kbd>, or <kbd>Alt+A</kbd></dt><dd>Add a cause to the selected effect</dd>
         <dt><kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Hypothesis, confirmed, ruled out</dd>` : `
-        <dt><kbd>Ins</kbd> or <kbd>Alt+A</kbd></dt><dd>Add an action to the selected effect</dd>
-        <dt><kbd>Shift+Ins</kbd> or <kbd>Alt+C</kbd></dt><dd>Add a condition</dd>`}
+        <dt><kbd>Ins</kbd>, <kbd>Tab</kbd>, or <kbd>Alt+A</kbd></dt><dd>Add an action to the selected effect</dd>
+        <dt><kbd>Shift+Ins</kbd>, <kbd>Shift+Tab</kbd>, or <kbd>Alt+C</kbd></dt><dd>Add a condition</dd>`}
         <dt>Type</dt><dd>Replace the title; <kbd>Enter</kbd> finishes it</dd>
         <dt><kbd>F2</kbd> or <kbd>Enter</kbd></dt><dd>Edit the title</dd>
         <dt><kbd>←↑↓→</kbd></dt><dd>Select the neighbouring node</dd>
@@ -86,7 +94,8 @@ function renderRcaProperties(box) {
         <dt><kbd>Shift+↑</kbd> <kbd>Shift+↓</kbd></dt><dd>Move the cause up or down, with its branch; or Shift+drag it</dd>
         <dt><kbd>Alt+L</kbd></dt><dd>Link an existing node as a cause</dd>
         <dt>Drag on the canvas</dt><dd>Select the nodes in the box. <kbd>Ctrl+click</kbd> adds or takes out one</dd>
-        <dt><kbd>Alt+G</kbd></dt><dd>Add a summary: one cause shared by the selected causes</dd>
+        <dt><kbd>Alt+G</kbd></dt><dd>Add a summary: one cause shared by the selected causes</dd>${tree ? '' : `
+        <dt><kbd>Alt+O</kbd></dt><dd>Make the selected causes alternatives (OR); on one of them, take it out</dd>`}
         <dt>Right-drag, wheel</dt><dd>Pan, zoom</dd>
         <dt><kbd>Space</kbd></dt><dd>Collapse or expand the branch</dd>
         <dt><kbd>Esc</kbd></dt><dd>Cancel linking, moving, or a drag; or clear the selection. In the title: undo what was typed</dd>
@@ -111,6 +120,7 @@ function renderNodeProperties(box, n) {
   const evidence = n.evidenceIds.map(evidenceById).filter(Boolean);
   const solutions = solutionsOf(n.id);
   const tree = treeStyle();
+  const alternatives = tree || isPrimary ? [] : alternativesOf(layout.parent.get(n.id), n.id);
   const kindName = isPrimary ? 'Primary effect' : tree ? {possible: 'Hypothesis', confirmed: 'Confirmed cause', 'ruled-out': 'Ruled out'}[n.status] : KINDS[n.kind].name;
   const about = [causes.length && !isPrimary ? 'also an effect' : '', causes.length ? `${causes.length} cause${causes.length > 1 ? 's' : ''}` : '',
     layout.summaries.some(x => x.id === n.id) ? `summary of ${effects.length} causes` : effects.length > 1 ? `supports ${effects.length} effects` : ''].filter(Boolean).join(' · ');
@@ -134,6 +144,15 @@ function renderNodeProperties(box, n) {
     <div class="segmented cause-type" role="group" aria-label="Root cause type">${Object.entries(CAUSE_TYPES).map(([k, t]) =>
       `<button data-cause-type="${k}" ${pressed(n.causeType === k)} title="${t.about}${n.causeType === k ? '. Click again to clear' : ''}">${t.name}</button>`).join('')}</div>`}
     ${n.stopPoint ? `<label class="field" for="nodeStopReason">Why the branch stops</label><select class="text" id="nodeStopReason">${Object.entries(STOP_REASONS).map(([k, v]) => `<option value="${k}" ${n.stopPoint.reason === k ? 'selected' : ''}>${v}</option>`).join('')}</select>` : ''}
+    ${alternatives.length ? `<div class="section">
+      <div class="panel-title">Alternatives (OR) · one of ${alternatives.length + 1}</div>
+      <p class="note" style="margin-top:0">This or one of these caused the effect; the evidence must settle which.</p>
+      <ul class="cause-list">${alternatives.map(c => `<li><button data-goto="${c.id}">${swatch(c)}${escapeHtml(c.title)}</button></li>`).join('')}</ul>
+      <div class="button-grid">
+        <button class="button" id="inspKeep" title="Move the other alternatives to the causes ruled out">Keep this one</button>
+        <button class="button" id="inspLeave" title="It was needed, with the other causes (AND) (Alt+O)">Not an alternative</button>
+      </div>
+    </div>` : ''}
 
     <div class="section">
       <div class="section-head"><div class="panel-title">Evidence · ${evidence.length} cited</div></div>
@@ -153,8 +172,8 @@ function renderNodeProperties(box, n) {
       <div class="panel-title">${isPrimary ? 'Causes' : 'Causes of this effect'}</div>
       ${causes.length ? `<ul class="cause-list">${causes.map(c => `<li><button data-goto="${c.id}">${swatch(c)}${escapeHtml(c.title)}</button></li>`).join('')}</ul>` : '<p class="note" style="margin-top:0">No causes yet.</p>'}
       <div class="button-grid">
-        ${tree ? '<button class="button" id="inspAddAction" title="Insert or A">+ Cause</button>' : `<button class="button" id="inspAddAction" title="Insert or A">+ Action</button>
-        <button class="button" id="inspAddCondition" title="Shift+Insert or C">+ Condition</button>`}
+        ${tree ? '<button class="button" id="inspAddAction" title="Insert, Tab, or Alt+A">+ Cause</button>' : `<button class="button" id="inspAddAction" title="Insert, Tab, or Alt+A">+ Action</button>
+        <button class="button" id="inspAddCondition" title="Shift+Insert, Shift+Tab, or Alt+C">+ Condition</button>`}
         <button class="button" id="inspLink" title="Link a node already on the chart as a further cause (Alt+L)">Link existing</button>
         ${causes.length ? `<button class="button" id="inspCollapse" title="Space">${collapsed.has(n.id) ? 'Expand branch' : 'Collapse branch'}</button>` : ''}
         <button class="button" id="inspCopy" title="Copy this node and every cause under it (Ctrl+C)">Copy branch</button>
@@ -197,6 +216,8 @@ function renderNodeProperties(box, n) {
     e.preventDefault(); e.stopPropagation();
     if (n.title !== titleBefore) restoreHistory(); else e.target.blur();
   };
+  if ($('inspKeep')) $('inspKeep').onclick = keepAlternative;
+  if ($('inspLeave')) $('inspLeave').onclick = alternativesSelected;
   if ($('nodeTest')) $('nodeTest').oninput = e => { n.test = e.target.value; persist('test:' + n.id); };
   box.querySelectorAll('[data-status]').forEach(b => b.onclick = () => setNodeStatus(b.dataset.status));
   $('nodeDescription').oninput = e => { n.description = e.target.value; persist('description:' + n.id); };

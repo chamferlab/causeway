@@ -103,8 +103,10 @@ function chartMarkup(l, opts = {}) {
   else for (const e of l.edges) {
     s += `<path class="edge${e.summary ? ' brace' : ''}" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${e.shared ? C.shared : C.wire}" stroke-width="1.6"${e.shared ? ' stroke-dasharray="6 4"' : ''}/>`;
   }
-  for (const e of l.edges) {
-    if (!e.junction || treeStyle()) continue;
+  // AND where an effect's causes meet; OR, dashed, where a group of alternatives joins them.
+  for (const e of treeStyle() ? [] : l.edges) {
+    for (const o of e.ors || []) s += `<g class="junction or"><rect x="${o.x - 11}" y="${o.y - 8}" width="22" height="16" rx="8" fill="${C.panel}" stroke="${C.wire}" stroke-width="1.5" stroke-dasharray="3 2"/><text x="${o.x}" y="${o.y + 3}" font-size="8.5" font-weight="800" letter-spacing="0.5" text-anchor="middle" fill="${C.junctionText}">OR</text></g>`;
+    if (!e.junction) continue;
     const {x, y} = e.junction;
     s += `<g class="junction"><rect x="${x - 16}" y="${y - 8}" width="32" height="16" rx="8" fill="${C.panel}" stroke="${C.wire}" stroke-width="1.5"/><text x="${x}" y="${y + 3}" font-size="8.5" font-weight="800" letter-spacing="0.5" text-anchor="middle" fill="${C.junctionText}">AND</text></g>`;
   }
@@ -230,7 +232,7 @@ function renderStyle() {
   $('addAction').title = tree ? 'Add a possible cause to the selected effect' : 'Add an action cause to the selected effect';
   $('keyHints').innerHTML = tree
     ? 'Type to rename · <kbd>Ins</kbd> cause · <kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd> status · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete'
-    : 'Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete';
+    : 'Type to rename · <kbd>Ins</kbd> action · <kbd>Shift+Ins</kbd> condition · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Alt+O</kbd> alternatives (OR) · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete';
 }
 
 function renderTitle() {

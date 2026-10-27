@@ -319,6 +319,7 @@ const GUIDES = {
       'Where one cause supports several effects, <b>Link cause</b> (<kbd>Alt+L</kbd>) draws the second link.',
       'End each branch with a <b>stop point</b> and its reason. Tick <b>Controllable</b> on causes you can change, and give root causes their <b>type</b>: occurrence, escape point, or systemic.',
       'Rule out what the evidence disproves with <b>Rule out</b>; it moves to the causes ruled out.',
+      'When the evidence cannot yet tell which of some causes it was, select them and press <kbd>Alt+O</kbd>: they become <b>alternatives</b>, joined by a dashed <b>OR</b>. Test them, then choose <b>Keep this one</b> on the cause the evidence confirms; the others are ruled out.',
     ],
     tips: [
       'An effect with only an action, or only a condition, is incomplete: the chart outlines it.',

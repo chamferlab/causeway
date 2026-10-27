@@ -50,7 +50,7 @@ function selectMany(ids) {
   picked = new Set(ids.length > 1 ? ids : []);
   selected = ids.at(-1) ?? null;
   render();
-  if (picked.size > 1) setStatus(`${plural(picked.size, 'node')} selected${summaryProblem(ids, layout.parent.get(selected)) ? '' : ': Alt+G gives them a summary'}`);
+  if (picked.size > 1) setStatus(`${plural(picked.size, 'node')} selected${summaryProblem(ids, layout.parent.get(selected)) ? '' : ': Alt+G gives them a summary'}${alternativesProblem(ids, layout.parent.get(selected)) ? '' : ', Alt+O makes them alternatives (OR)'}`);
 }
 function togglePicked(id) {
   const ids = selection();
@@ -78,15 +78,47 @@ function ruleOutSelected() {
   if (treeStyle()) { setNodeStatus('ruled-out'); return; }
   const ids = deletionSet(n.id), others = ids.length - 1;
   if (others && !confirm(`Rule out "${n.title}"? The ${others} cause${others > 1 ? 's' : ''} that only it supports will be deleted.`)) return;
-  const r = {id: uuid(), cause: n.title, kind: ['action', 'condition'].includes(n.kind) ? n.kind : '', test: n.test, evidenceIds: [...n.evidenceIds], status: 'ruled-out'};
-  state.ruledOut.push(r);
-  // A fishbone cause that was this node is now this ruled-out cause.
-  for (const c of fishCauses()) if (c.nodeId === n.id) Object.assign(c, {nodeId: null, ruledOutId: r.id});
   const effect = effectsOf(n.id)[0];
+  toRuledOut(n);
   deleteNodes(ids);
   selected = effect?.id ?? null;
   render(); persist();
   setStatus(`Moved "${n.title}" to the causes ruled out`);
+}
+// The ruled-out record of a node about to be deleted.
+function toRuledOut(n) {
+  const r = {id: uuid(), cause: n.title, kind: ['action', 'condition'].includes(n.kind) ? n.kind : '', test: n.test, evidenceIds: [...n.evidenceIds], status: 'ruled-out'};
+  state.ruledOut.push(r);
+  // A fishbone cause that was this node is now this ruled-out cause.
+  for (const c of fishCauses()) if (c.nodeId === n.id) Object.assign(c, {nodeId: null, ruledOutId: r.id});
+}
+
+// ---- Alternatives (OR) ----
+// Alt+O: the selected causes become alternatives, one of which caused their effect; with one of them
+// selected, Alt+O takes it out of its group. Keep this one rules out the others.
+function alternativesSelected() {
+  const ids = selection(), effectId = layout.parent.get(selected);
+  if (ids.length === 1 && alternativesOf(effectId, selected).length) {
+    leaveAlternatives(effectId, selected);
+    render(); persist();
+    setStatus(`"${byId(selected).title}" is no longer an alternative: it was needed, with the other causes (AND)`);
+    return;
+  }
+  const problem = alternativesProblem(ids, effectId);
+  if (problem) { setStatus(problem); return; }
+  makeAlternatives(ids, effectId);
+  render(); persist();
+  setStatus(`${plural(ids.length, 'alternative')} (OR), marked unverified: test them, and rule out all but one`);
+}
+function keepAlternative() {
+  const n = byId(selected), effectId = layout.parent.get(selected), others = alternativesOf(effectId, selected);
+  if (!n || !others.length) return;
+  const ids = deletionSet(...others.map(c => c.id)), more = ids.length - others.length;
+  if (!confirm(`Keep "${n.title}" and move ${others.length === 1 ? `"${others[0].title}"` : plural(others.length, 'alternative')} to the causes ruled out?${more ? ` The ${plural(more, 'cause')} that only they support will be deleted.` : ''}`)) return;
+  for (const c of others) toRuledOut(c);
+  deleteNodes(ids);
+  render(); persist();
+  setStatus(`Kept "${n.title}": ${plural(others.length, 'alternative')} moved to the causes ruled out`);
 }
 
 // A cause tree: Alt+1, Alt+2, and Alt+3 set the status of the selected causes. A confirmed cause happened,

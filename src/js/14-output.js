@@ -167,6 +167,11 @@ function rootCauses() {
   const live = reachable();
   return state.nodes.filter(n => live.has(n.id) && isCause(n) && !isRuledOut(n) && (n.causeType || n.stopPoint?.reason === 'solution-found'));
 }
+// A root cause that is one of alternatives not yet settled says so, with the others.
+function orNote(n) {
+  const effect = effectsOf(n.id).find(e => alternativesOf(e.id, n.id).length);
+  return effect ? `One of: ${[n, ...alternativesOf(effect.id, n.id)].map(c => c.title).join(' / ')} (being tested)` : '';
+}
 // A cause's chain up to the primary effect, along its first effect.
 function causeChain(n) {
   const chain = [n], seen = new Set([n.id]);
@@ -213,7 +218,7 @@ function fullReport() {
       <h2>${treeStyle() ? 'Cause tree' : 'Cause-and-effect chart'}</h2>
       <p class="r-legend">${treeStyle()
         ? 'Read left to right: each effect, then its possible causes. Red: primary effect. Solid teal, with a bold link: confirmed. White, dashed, H: hypothesis, still to test. Grey, struck through, ✕: ruled out. E-codes: evidence. Orange badge: no evidence. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'
-        : 'Read left to right: each effect, then the causes that were all needed for it (AND). Red: primary effect. Dark: action. Light: condition. E-codes: evidence. ?: no evidence or unverified. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'}</p>
+        : 'Read left to right: each effect, then the causes that were all needed for it (AND). OR, dashed: alternatives, one of which was needed, still to settle. Red: primary effect. Dark: action. Light: condition. E-codes: evidence. ?: no evidence or unverified. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'}</p>
       ${chartFigures().join('')}
       ${issues.length ? `<h3>Open rule issues</h3><ul>${issues.map(i => `<li class="${i.level === 'error' ? 'r-issue-error' : ''}">${escapeHtml(issueTitle(i))}: ${escapeHtml(i.text)}</li>`).join('')}</ul>` : ''}
     </section>
@@ -309,7 +314,7 @@ function report8D() {
         <td>${rText(r.is)}</td><td>${rText(r.isNot)}</td><td>${rText(r.distinction)}</td><td>${rText(r.change)}</td></tr>`), '')}` : ''}`)}
     ${d(3, 'Containment actions', rTable(ACTION_HEADS, actionRows(actionsOfKind('containment')), 'No containment actions recorded.'))}
     ${d(4, 'Root causes', `${groups.length ? groups.map(([t, list]) => `<h3>${t.name}${t.about ? ` <span class="r-sub">${t.about.toLowerCase()}</span>` : ''}</h3>
-        ${rTable(['Root cause', 'How it was verified', 'Evidence', 'Chain to the problem'], list.map(n => `<tr><td><b>${escapeHtml(n.title)}</b></td><td>${rText(n.test)}</td>
+        ${rTable(['Root cause', 'How it was verified', 'Evidence', 'Chain to the problem'], list.map(n => `<tr><td><b>${escapeHtml(n.title)}</b>${orNote(n) ? `<small class="r-tags">${escapeHtml(orNote(n))}</small>` : ''}</td><td>${rText(n.test)}</td>
           <td>${n.evidenceIds.map(evidenceById).filter(Boolean).map(ev => `<span class="r-code">${escapeHtml(ev.code)}</span> ${escapeHtml(ev.description)}`).join('\n') || '—'}</td>
           <td class="r-chain">${causeChain(n).slice(1).map(x => escapeHtml(shorten(x.title, 60))).join(' → ')}</td></tr>`), '')}`).join('')
       : '<p class="r-none">No root cause identified yet: give the causes a root cause type, or a stop point “Effective solution found”.</p>'}
@@ -346,7 +351,7 @@ function reportSummary() {
       <div class="r-block"><h3>The problem</h3>
       <dl class="r-list">${key.map(([k, v]) => rItem(k, v)).join('')}${impact.map(([k, v]) => rItem(k, v)).join('')}</dl></div>
       <div class="r-block"><h3>Root causes</h3>
-      ${roots.length ? `<ul class="r-roots">${roots.map(n => `<li><b>${escapeHtml(n.title)}</b>${n.causeType ? ` <span class="r-tagline">${CAUSE_TYPES[n.causeType].name}</span>` : ''}
+      ${roots.length ? `<ul class="r-roots">${roots.map(n => `<li><b>${escapeHtml(n.title)}</b>${n.causeType ? ` <span class="r-tagline">${CAUSE_TYPES[n.causeType].name}</span>` : ''}${orNote(n) ? `<div class="r-chain">${escapeHtml(orNote(n))}</div>` : ''}
         ${chain(n).length ? `<div class="r-chain">→ ${chain(n).join(' → ')}</div>` : ''}</li>`).join('')}</ul>` : '<p class="r-none">Not identified yet.</p>'}</div>
       <div class="r-block"><h3>Actions</h3>
       ${rTable(['Action', 'Kind', 'Owner', 'Due', 'Status', 'Did it work?'], live.map(a => `<tr><td>${rText(a.action)}</td><td>${ACTION_KINDS[a.kind]}${ACTION_STRENGTH[a.strength] ? '\n' + ACTION_STRENGTH[a.strength] : ''}</td>
