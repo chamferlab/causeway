@@ -14,10 +14,14 @@
 </style>
 </head>
 <body>
-<div class="app" id="app" data-record="chart" data-style="apollo">
+<div class="app" id="app" data-record="chart" data-style="apollo" data-module="rca">
   <header>
     <div class="mark" aria-hidden="true">C</div>
     <div class="brand"><small id="sheetMeta">Causeway</small><strong id="sheetTitle">Untitled RCA</strong></div>
+    <div class="module-switch" role="group" aria-label="Module">
+      <button id="moduleRca" aria-pressed="true" title="Root cause analysis of a failure">RCA</button>
+      <button id="moduleDfmea" aria-pressed="false" title="Design FMEA: the risks of a design, before it fails">DFMEA</button>
+    </div>
     <div class="group">
       <button class="icon" id="undo" title="Undo (Ctrl/Cmd+Z)" aria-label="Undo" disabled><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4 3 7l3 3"/><path d="M3 7h6.5a3.5 3.5 0 0 1 0 7H8"/></svg></button>
       <button class="icon" id="redo" title="Redo (Ctrl+Y or Ctrl/Cmd+Shift+Z)" aria-label="Redo" disabled><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m10 4 3 3-3 3"/><path d="M13 7H6.5a3.5 3.5 0 0 0 0 7H8"/></svg></button>
@@ -32,6 +36,9 @@
       <div class="menu-wrap">
         <button id="exportButton" aria-expanded="false" aria-controls="exportMenu" title="Export a report as Word or PowerPoint, or the chart as PDF or an image">Export ▾</button>
         <div id="exportMenu" class="popover right" role="menu" hidden>
+          <div class="where fmea-only">Word</div>
+          <button role="menuitem" id="exportDocxDfmea" class="fmea-only"><b>DFMEA report</b><small>.docx: scope, the worksheet, and the actions</small></button>
+          <div class="rca-only">
           <div class="where">Word</div>
           <button role="menuitem" id="exportDocxFull"><b>Full report</b><small>.docx: every record and the chart, to edit and send</small></button>
           <button role="menuitem" id="exportDocx8d"><b>8D report</b><small>.docx: D1 to D8, for a customer's 8D request</small></button>
@@ -43,14 +50,16 @@
           <button role="menuitem" id="exportPdf"><b>PDF</b><small>Vector, the whole chart on one A4, A3, or A1 sheet</small></button>
           <button role="menuitem" id="exportSvg"><b>SVG</b><small>Vector, for documents and further editing</small></button>
           <button role="menuitem" id="exportPng"><b>PNG</b><small>Image at twice screen resolution</small></button>
+          </div>
         </div>
       </div>
       <div class="menu-wrap">
         <button id="printReport" aria-expanded="false" aria-controls="printMenu" title="Print a report, or save it as a PDF">Print ▾</button>
         <div id="printMenu" class="popover right" role="menu" hidden>
-          <button role="menuitem" id="printFull"><b>Full RCA report</b><small>Every record, the chart, and the sign-off</small></button>
-          <button role="menuitem" id="print8d"><b>8D report</b><small>D1 to D8, for a customer's 8D request</small></button>
-          <button role="menuitem" id="printSummary"><b>One-page summary</b><small>Problem, root causes, actions, and status</small></button>
+          <button role="menuitem" id="printFull" class="rca-only"><b>Full RCA report</b><small>Every record, the chart, and the sign-off</small></button>
+          <button role="menuitem" id="print8d" class="rca-only"><b>8D report</b><small>D1 to D8, for a customer's 8D request</small></button>
+          <button role="menuitem" id="printSummary" class="rca-only"><b>One-page summary</b><small>Problem, root causes, actions, and status</small></button>
+          <button role="menuitem" id="printDfmea" class="fmea-only"><b>DFMEA report</b><small>Scope, the worksheet, and the actions</small></button>
         </div>
       </div>
       <span class="divider" aria-hidden="true"></span>
@@ -63,7 +72,7 @@
     </div>
   </header>
 
-  <nav class="rail" aria-label="RCA records">
+  <nav class="rail" id="rcaRail" aria-label="RCA records">
     <button class="record learn" data-record="learn" title="Every method in the order an investigation uses them, each with a guide and an example">Learn the methods</button>
     <div class="panel-title group-title">Analysis</div>
     <button class="record active" data-record="chart" aria-current="page" id="railChart"><b id="railChartName">Cause &amp; effect</b><span id="railCauses">0</span></button>
@@ -131,6 +140,9 @@
   <aside class="guide" id="guide" aria-label="Guide" hidden></aside>
 
   <section class="records" id="records" aria-live="off"></section>
+
+  <nav class="rail" id="dfmeaRail" aria-label="DFMEA pages"></nav>
+  <section class="dfmea" id="dfmea"></section>
 
   <footer>
     <span id="status">Ready</span>

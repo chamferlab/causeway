@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.21 — 2026-10-27
+
+DFMEA, a module of its own beside the RCA.
+
+- **RCA | DFMEA** in the top bar switches module. The two share the app and nothing else: each has its own pages, undo history, autosave, and file, and the top bar's buttons act on the module shown. A DFMEA file opens in the DFMEA from either module.
+- A DFMEA is a tree of seven levels, project to cause, panned and zoomed as the RCA chart, and edited as a mind map: **Tab** child, **Enter** sibling, typing names, **F2** edits, **Ctrl+C**/**Ctrl+V** copy branches, and text pastes one child per line. Each branch to a cause has an ID.
+- Pages: **Structure** (the tree and its properties), **Risk analysis** (every branch, rated in the table), **Optimisation** (actions and the ratings they should reach), and **Action tracker** (assignee, status, target, ISO weeks, and weekly notes).
+- Scoring by **RPN with a limit** (D × max(Safety, Environment, Others) × POF) or by **AIAG-VDA Action Priority**, switchable at any time: each cause keeps both sets of ratings.
+- Issues, a printed **DFMEA report**, and the same as Word. A CS-50 cartridge seal example.
+
 ## v1.20 — 2026-10-27
 
 Editing from the keyboard, as in a mind map, in both chart styles.

@@ -13,3 +13,4 @@
   }
   replaceState(blankState());
 })();
+startDfmea();

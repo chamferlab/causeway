@@ -10,8 +10,9 @@ function renderIssues(issues) {
   if (!$('issuesList').hidden) fillIssues(issues);
 }
 
-function fillIssues(issues = ruleIssues()) {
+function fillIssues(issues = appModule === 'dfmea' ? dfmeaIssues() : ruleIssues()) {
   const sorted = [...issues].sort((a, b) => ISSUE_ORDER[a.level] - ISSUE_ORDER[b.level]);
+  if (appModule === 'dfmea') { fillDfmeaIssues(sorted); return; }
   $('issuesList').innerHTML = sorted.length
     ? sorted.map(i => `<button role="menuitem" ${i.nodeId ? `data-node="${i.nodeId}"` : `data-record="${i.record}" data-id="${i.id}"`}><b>${escapeHtml(shorten(issueTitle(i), 90))}</b>${i.nodeId ? '' : `<span class="where">${RECORD_NAMES[i.record]}</span>`}<small class="${i.level}">${escapeHtml(i.text)}</small></button>`).join('')
     : `<div class="empty">No issues: ${treeStyle() ? 'every cause is tested, and every confirmed cause has evidence' : 'every effect has an action and a condition, and every cause has evidence'}.</div>`;

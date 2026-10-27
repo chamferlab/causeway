@@ -2241,6 +2241,206 @@ def run_tests(b):
     assert len(b.js("return document.querySelectorAll('#chart .node')")) == 16
     print('PASS: works when storage is unavailable', flush=True)
 
+    # ---- DFMEA: a module of its own ----
+    open_app(clear=True)
+    click('loadExample')
+    rca_before = rca()
+
+    def dfmea_saved():
+        return b.js("return JSON.parse(localStorage.getItem('causeway-dfmea-v1'))")
+
+    def dfmea():
+        return dfmea_saved()['dfmea']
+
+    def df_titles(n, depth=0, out=None):
+        out = [] if out is None else out
+        out.append((depth, n['title']))
+        for k in n['children']:
+            df_titles(k, depth + 1, out)
+        return out
+
+    def df_select(title):
+        b.js("[...document.querySelectorAll('#dfmea .df-box')].find(x=>x.textContent.includes(arguments[0])).click();return true", [title])
+
+    def df_page(name):
+        b.js("document.querySelector(`[data-dfmea-page=${arguments[0]}]`).click();return true", [name])
+
+    def module():
+        return b.js("return document.getElementById('app').dataset.module")
+
+    click('moduleDfmea')
+    assert module() == 'dfmea' and b.js("return getComputedStyle(document.querySelector('main')).display") == 'none'
+    assert b.js("return getComputedStyle(document.getElementById('dfmea')).display") != 'none'
+    assert [t for _, t in df_titles(dfmea()['root'])] == ['Describe the project'], 'a blank DFMEA to start'
+    click('loadExample')
+    d = dfmea()
+    causes = [t for depth, t in df_titles(d['root']) if depth == 6]
+    assert len(causes) == 7 and len(d['actions']) == 5 and d['meta']['method'] == 'rpn'
+    assert b.js("return document.querySelectorAll('#dfmea .df-box').length") == len(df_titles(d['root']))
+    assert rca() == rca_before, 'the DFMEA leaves the RCA alone'
+    print('PASS: DFMEA module beside the RCA, with its own example', flush=True)
+
+    # Tab adds a child, Enter a sibling, typing names it; arrows select; Delete removes with what is under it.
+    df_select('Springs clog')
+    key('Tab')
+    assert status() == 'Added an effect: type to name it', status()
+    type_keys('Spring force lost')
+    b.js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return true")
+    found = [(depth, t) for depth, t in df_titles(dfmea()['root']) if t.startswith('Spring force') or t == 'S']
+    assert (5, 'Spring force lost') in found, found
+    key('Enter')
+    type_keys('Faces open')
+    b.js("document.activeElement.blur();return true")
+    effects = [k['title'] for k in next(fm for fm in [n for p in dfmea()['root']['children'] for c in p['children'] for f in c['children'] for n in f['children']] if fm['title'] == 'Springs clog')['children']]
+    assert effects == ['Faces open; leakage at start-up', 'Spring force lost', 'Faces open'], effects
+    key('Tab')
+    assert 'New cause' in [t for depth, t in df_titles(dfmea()['root']) if depth == 6]
+    key('Delete')
+    assert 'New cause' not in [t for depth, t in df_titles(dfmea()['root']) if depth == 6]
+    selected = lambda: b.js("return document.querySelector('#dfmea .df-box.sel').textContent")
+    assert selected().endswith('Faces open'), 'the parent of the cause deleted is selected'
+    key('ArrowLeft')
+    assert 'Springs clog' in selected()
+    click('undo')
+    assert 'New cause' in [t for depth, t in df_titles(dfmea()['root']) if depth == 6], 'undo brings the cause back'
+    click('redo')
+    assert 'New cause' not in [t for depth, t in df_titles(dfmea()['root']) if depth == 6]
+    assert rca() == rca_before, "the DFMEA's undo leaves the RCA alone"
+    print('PASS: DFMEA tree: Tab child, Enter sibling, typing names, Delete, and its own undo', flush=True)
+
+    # Pan and zoom: an example opens fitted; the wheel zooms at the pointer; dragging the canvas pans and keeps the selection.
+    click('loadExample')
+    def view():
+        t = b.js("return document.getElementById('dfTree').style.transform")
+        x, y, k = map(float, re.findall(r'-?[\d.]+', t))
+        return x, y, k, b.js("return document.getElementById('dfZoomReset').textContent")
+    fitted = view()
+    assert fitted[2] < 1 and fitted[3] == f'{round(fitted[2] * 100)}%'
+    assert b.js('''const c=document.getElementById('dfCanvas').getBoundingClientRect(),t=document.getElementById('dfTree').getBoundingClientRect();
+        return t.left>=c.left-1&&t.right<=c.right+1&&t.bottom<=c.bottom+1'''), 'the whole tree is in view'
+    b.js("const c=document.getElementById('dfCanvas'),r=c.getBoundingClientRect();c.dispatchEvent(new WheelEvent('wheel',{deltaY:-100,clientX:r.x+300,clientY:r.y+200,bubbles:true,cancelable:true}));return true")
+    zoomed = view()
+    assert zoomed[2] > fitted[2] and abs((300 - zoomed[0]) / zoomed[2] - (300 - fitted[0]) / fitted[2]) < .5, 'the point under the pointer stays put'
+    df_select('Springs clog')
+    ex, ey = b.js('''const c=document.getElementById('dfCanvas'),r=c.getBoundingClientRect();
+        for(let y=r.top+150;y<r.bottom-100;y+=10)for(let x=r.left+150;x<r.right-50;x+=10){const e=document.elementFromPoint(x,y);if(e===c||e.id==='dfTree'||e.classList.contains('df-sub')||e.classList.contains('df-kids'))return [Math.round(x),Math.round(y)]}''')
+    b.call('WebDriver:PerformActions', {'actions': [{'type': 'pointer', 'id': 'mouse', 'parameters': {'pointerType': 'mouse'}, 'actions': [
+        {'type': 'pointerMove', 'x': ex, 'y': ey}, {'type': 'pointerDown', 'button': 0}, {'type': 'pointerMove', 'x': ex - 100, 'y': ey - 100, 'duration': 100}, {'type': 'pointerUp', 'button': 0}]}]})
+    b.call('WebDriver:ReleaseActions')
+    panned = view()
+    assert (round(panned[0] - zoomed[0]), round(panned[1] - zoomed[1]), panned[2]) == (-100, -100, zoomed[2]), (panned, zoomed)
+    assert b.js("return document.querySelector('#dfmea .df-box.sel')?.textContent.includes('Springs clog')"), 'a pan is not a click on the canvas'
+    b.js("document.querySelector('[data-dfa=zoom-reset]').click();return true")
+    assert view()[3] == '100%'
+    b.js("document.querySelector('[data-dfa=zoom-fit]').click();return true")
+    assert view() == fitted
+    print('PASS: DFMEA tree pan and zoom', flush=True)
+
+    # Copy a cause with Ctrl+C and paste it beside another; plain text pastes as children, one per line.
+    click('loadExample')
+    df_select('Seat too thin')
+    ctrl('c')
+    open_app()  # a reload: the branch comes from the system clipboard, not the page's memory
+    df_select('Balance ratio too high')
+    ctrl('v')
+    d = dfmea()
+    copies = [t for depth, t in df_titles(d['root']) if t == 'Seat too thin for 40 bar']
+    assert len(copies) == 2, copies
+    ids = []
+    def collect(n, depth=0):
+        if depth == 6: ids.append(n['branch'])
+        for k in n['children']: collect(k, depth + 1)
+    collect(d['root'])
+    assert len(set(ids)) == len(ids) == 8 and 'B-08' in ids, ids
+    df_select('Flush flow lost')
+    b.js("""window.addEventListener('copy',e=>{e.stopImmediatePropagation();e.preventDefault();
+        e.clipboardData.setData('text/plain','Faces run hot\\n\\n  Seal chamber boils\\n')},{capture:true,once:true});return true""")
+    ctrl('c')
+    ctrl('v')
+    effects = [t for depth, t in df_titles(dfmea()['root']) if depth == 5]
+    assert 'Faces run hot' in effects and 'Seal chamber boils' in effects, status()
+    print('PASS: DFMEA copy and paste of branches, and text as children', flush=True)
+
+    # Both scoring methods: RPN against the limit, and AIAG-VDA Action Priority.
+    click('loadExample')
+    df_page('risk')
+    rows = lambda: b.js("return [...document.querySelectorAll('#dfmea .df-table tbody tr')].map(r=>r.querySelector('.df-id').textContent)")
+    assert rows() == ['B-01', 'B-04', 'B-06'], rows()
+    b.js("document.querySelector('[data-dfa=filter][data-v=all]').click();return true")
+    assert len(rows()) == 7
+    # B-03: D4 × max(4,5,7) × POF2 = 56; POF 4 makes 112, above 100.
+    b.js("const i=document.querySelector('#dfmea [data-df=rating][data-k=pof][aria-label$=\"B-03\"]');i.value='4';i.dispatchEvent(new Event('change',{bubbles:true}));return true")
+    def cause_of(branch, n=None, depth=0):
+        n = n or dfmea()['root']
+        if depth == 6 and n['branch'] == branch: return n
+        for k in n['children']:
+            f = cause_of(branch, k, depth + 1)
+            if f: return f
+    assert cause_of('B-03')['ratings']['rpn']['pof'] == 4
+    assert '112' in b.js("return [...document.querySelectorAll('#dfmea .df-table tbody tr')].find(r=>r.textContent.includes('B-03')).textContent")
+    # 7 × 4 × 4 = 112 > 100 needs action; at a limit of 112 it is acceptable.
+    df_page('structure')
+    b.js("document.getElementById('dfCanvas').click();return true")
+    b.js("const i=document.getElementById('dfm-limit');i.value='112';i.dispatchEvent(new Event('change',{bubbles:true}));return true")
+    assert dfmea()['meta']['limit'] == 112
+    b.js("document.querySelector('#dfmea input[data-df=method][value=ap]').click();return true")
+    assert dfmea()['meta']['method'] == 'ap'
+    df_page('risk')
+    b.js("document.querySelector('[data-dfa=filter][data-v=all]').click();return true")
+    scores = b.js("return Object.fromEntries([...document.querySelectorAll('#dfmea .df-table tbody tr')].map(r=>[r.querySelector('.df-id').textContent,r.querySelectorAll('.df-score')[0].textContent]))")
+    # S8 O6 D6 → H; S8 O3 D5 → M; S8 O2 D4 → L; S9 O3 D7 → H (AIAG-VDA DFMEA table).
+    assert scores['B-01'] == 'H' and scores['B-02'] == 'M' and scores['B-03'] == 'L' and scores['B-06'] == 'H', scores
+    assert cause_of('B-03')['ratings']['rpn']['pof'] == 4, 'switching the method keeps the other ratings'
+    b.js("document.querySelector('[data-dfa=filter][data-v=action]').click();return true")
+    assert 'B-05' not in rows(), 'a Medium with a written reason needs no action'
+    print('PASS: DFMEA scoring by RPN with a limit, or by Action Priority, switched without losing ratings', flush=True)
+
+    # Actions lower the score; the tracker shows ISO weeks and takes a note for this week.
+    click('loadExample')
+    df_page('optimise')
+    b.js("document.querySelector('#dfmea [data-cause] [data-dfa=add-action]').click();return true")
+    assert len(dfmea()['actions']) == 6
+    b.js("document.activeElement.value='Thicker seat';document.activeElement.dispatchEvent(new Event('input',{bubbles:true}));return true")
+    assert any(a['title'] == 'Thicker seat' for a in dfmea()['actions'])
+    df_page('tracker')
+    assert b.js("return document.querySelectorAll('#dfmea .df-tracker tbody tr').length") == 6
+    weeks = b.js("return [...document.querySelectorAll('#dfmea tr')[3].querySelectorAll('.df-weeks span')].map(s=>s.textContent)")
+    assert weeks == ['43', '44', '45', '46', '47', '48'], weeks
+    first = dfmea()['actions'][1]['id']
+    b.js("document.querySelector(`#dfmea [data-dfa=add-note][data-id=\"${arguments[0]}\"]`).click();document.activeElement.value='Spec agreed';document.activeElement.dispatchEvent(new Event('input',{bubbles:true}));return true", [first])
+    notes = dfmea()['actions'][1]['notes']
+    assert len(notes) == 1 and notes[0]['text'] == 'Spec agreed' and re.fullmatch(r'\d{4}-W\d{2}', notes[0]['week'])
+    b.js("const s=document.querySelector(`#dfmea select[data-id=\"${arguments[0]}\"]`);s.value='cancelled';s.dispatchEvent(new Event('change',{bubbles:true}));return true", [dfmea()['actions'][0]['id']])
+    assert dfmea()['actions'][0]['status'] == 'cancelled'
+    print('PASS: DFMEA actions, and the tracker with ISO weeks and weekly notes', flush=True)
+
+    # Print and Word, and saving: a DFMEA file opens in the DFMEA module from the RCA.
+    click('loadExample')
+    b.js("window.print=()=>{};return true")
+    assert b.js("return getComputedStyle(document.getElementById('printDfmea')).display") != 'none'
+    click('printDfmea')
+    report = b.js("return document.getElementById('report').textContent")
+    assert 'DFMEA-SEAL-03' in report and 'B-07' in report and 'Cyclone separator' in report, report[:300]
+    z = docx('exportDocxDfmea')
+    text = ''.join(t.text or '' for t in ET.fromstring(z.read('word/document.xml')).iter(W + 't'))
+    assert 'CS-50 cartridge seal redesign' in text and 'Vapour-pressure margin check' in text and 'B-07' in text
+    assert '<dc:title>DFMEA: CS-50 cartridge seal redesign</dc:title>' in z.read('docProps/core.xml').decode()
+    b.js('__downloads.length=0;return true')
+    click('saveProject')
+    file = json.loads(b.async_js('const done=arguments[arguments.length-1];const wait=()=>__downloads.length?__downloads.at(-1).text().then(done):setTimeout(wait,50);wait()'))
+    assert file['type'] == 'causeway-dfmea' and len(file['actions']) == 5
+    click('moduleRca')
+    assert module() == 'rca' and rca() == rca_before
+    assert b.js("return getComputedStyle(document.getElementById('printDfmea')).display") == 'none'
+    file['root']['title'] = 'Opened from the RCA'
+    load(file)
+    assert module() == 'dfmea' and dfmea()['root']['title'] == 'Opened from the RCA'
+    assert rca() == rca_before
+    open_app()
+    assert module() == 'dfmea' and dfmea()['root']['title'] == 'Opened from the RCA', 'the module and the DFMEA come back after a reload'
+    click('moduleRca')
+    print('PASS: DFMEA print, Word, save, and open from either module', flush=True)
+
     # ---- No network ----
     assert b.js("return performance.getEntriesByType('resource').filter(r=>!r.name.startsWith('blob:')&&!r.name.startsWith('data:')).length") == 0, 'no resources were fetched'
     assert b.js('return __violations') == []

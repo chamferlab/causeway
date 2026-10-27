@@ -191,6 +191,7 @@ $('undo').onclick = () => restoreHistory();
 $('redo').onclick = () => restoreHistory(true);
 
 window.addEventListener('keydown', e => {
+  if (appModule !== 'rca') return;
   const key = e.key.toLowerCase(), command = (e.ctrlKey || e.metaKey) && !e.altKey;
   if ($('dialog').open) return;
   if (nodeDrag?.moved && key === 'escape') { e.preventDefault(); cancelNodeDrag(); setStatus('Drag cancelled'); return; }
@@ -240,7 +241,7 @@ window.addEventListener('keydown', e => {
 
 // Copy, cut, and paste on the chart, through the clipboard events, so the system clipboard is used.
 // In a field, or with text selected on the page, they act on the text as usual.
-const chartClipboard = () => record === 'chart' && !$('dialog').open && !linking
+const chartClipboard = () => appModule === 'rca' && record === 'chart' && !$('dialog').open && !linking
   && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) && !document.activeElement?.isContentEditable
   && (getSelection()?.isCollapsed ?? true);
 document.addEventListener('copy', e => { if (chartClipboard() && byId(selected)) { e.preventDefault(); copySelected(e.clipboardData); } });
@@ -250,6 +251,7 @@ document.addEventListener('paste', e => { if (chartClipboard()) { e.preventDefau
 // Arrow keys move the selection: left to the effect, right to the first cause, up and down within the column.
 // With Shift, up and down move the selected cause instead.
 window.addEventListener('keydown', e => {
+  if (appModule !== 'rca') return;
   if (!e.key.startsWith('Arrow') || e.ctrlKey || e.metaKey || e.altKey || record !== 'chart') return;
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
   e.preventDefault();

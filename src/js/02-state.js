@@ -58,6 +58,7 @@ let nodeShift = null;          // a node being moved up or down by hand: {id, st
 let clipboard = null;          // the branch last copied here: {data, text}, for when the system clipboard loses it
 let highlight = null;          // evidence id whose citing nodes are highlighted on the chart
 let record = 'chart';          // the page shown: the chart or one of the RCA records
+let appModule = 'rca';         // the module shown: 'rca' or 'dfmea' (see 20-dfmea-model.js); they share no data
 
 const byId = id => state.nodes.find(n => n.id === id);
 const primaryEffect = () => byId(state.problem.primaryEffectId);

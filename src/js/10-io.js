@@ -3,7 +3,7 @@
 let fileHandle = null;   // the file last opened or saved, where the File System Access API exists
 const canPickFiles = typeof window.showSaveFilePicker === 'function' && typeof window.showOpenFilePicker === 'function';
 const FILE_TYPES = [{description: 'Causeway RCA', accept: {'application/json': ['.json']}}];
-const OPEN_TYPES = [{description: 'Causeway RCA or XMind mind map', accept: {'application/json': ['.json'], 'application/zip': ['.xmind']}}];
+const OPEN_TYPES = [{description: 'Causeway RCA or DFMEA, or XMind mind map', accept: {'application/json': ['.json'], 'application/zip': ['.xmind']}}];
 
 function download(name, blob) {
   const url = URL.createObjectURL(blob), a = document.createElement('a');
@@ -116,6 +116,9 @@ function normalizeProject(p) {
 }
 
 function loadProject(data, handle = null) {
+  // A DFMEA file opens in the DFMEA module, wherever it was opened from.
+  if (data?.type === DFMEA_TYPE) { loadDfmea(data, handle); return; }
+  if (!leaveDfmeaFor('Open this RCA?')) return;
   replaceState(normalizeProject(data));
   fileHandle = handle;
   setStatus('Opened ' + (handle?.name || 'RCA'));
@@ -211,13 +214,14 @@ async function openFile(file, handle = null) {
   const sheets = await xmindSheets(buffer);
   if (!sheets.length) throw Error('The mind map is empty.');
   // Imported, not opened: Save writes a new Causeway file and leaves the map as it was.
+  if (!leaveDfmeaFor('Import this mind map as an RCA?')) return;
   replaceState(normalizeProject(xmindProject(sheets[0])), {saved: false});
   fileHandle = null;
   setStatus(`Imported ${file.name}${sheets.length > 1 ? ` (the first of its ${sheets.length} sheets)` : ''} as a cause tree`);
 }
 
 async function openProject() {
-  if (!confirmDiscard('Open another RCA?')) return;
+  if (!(appModule === 'dfmea' ? confirmDiscardDfmea('Open another file?') : confirmDiscard('Open another RCA?'))) return;
   if (!canPickFiles) { $('projectFile').click(); return; }
   try {
     const [handle] = await window.showOpenFilePicker({types: OPEN_TYPES});
@@ -260,4 +264,4 @@ $('loadExample').onclick = () => {
   setStatus('Loaded the P-101A example');
 };
 
-window.addEventListener('beforeunload', e => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', e => { if (isDirty() || dfmeaDirty()) { e.preventDefault(); e.returnValue = ''; } });

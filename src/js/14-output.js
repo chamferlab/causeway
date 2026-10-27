@@ -90,8 +90,10 @@ function showMenu(open, menu = 'exportMenu') {
     $(id).hidden = !show;
     $(button).setAttribute('aria-expanded', show);
   }
-  if (open) $(menu).querySelector('button').focus();
+  if (open) menuItems(menu)[0]?.focus();
 }
+// The items shown: each module hides the other's.
+const menuItems = menu => [...$(menu).querySelectorAll('button')].filter(b => b.offsetParent !== null);
 for (const [menu, button] of Object.entries(MENUS)) {
   $(button).onclick = () => showMenu($(menu).hidden, menu);
   $(menu).addEventListener('keydown', e => {
@@ -99,7 +101,7 @@ for (const [menu, button] of Object.entries(MENUS)) {
     if (e.key === 'Escape') { showMenu(false); $(button).focus(); }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
-      const items = [...$(menu).querySelectorAll('button')], i = items.indexOf(document.activeElement);
+      const items = menuItems(menu), i = items.indexOf(document.activeElement);
       items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
     }
   });

@@ -279,7 +279,9 @@ const docxFooter = kind => `<?xml version="1.0" encoding="UTF-8" standalone="yes
   <w:fldSimple w:instr=" NUMPAGES "><w:r><w:rPr><w:color w:val="${DOCX_COLORS.muted}"/><w:sz w:val="16"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple>
 </w:p></w:ftr>`;
 
+// title and subject: for the document's properties; base: the start of the file name.
 const DOCX_REPORTS = {full: {kind: 'Root cause analysis', file: 'report'}, '8d': {kind: '8D report', file: '8D'}};
+const docxTitle = layout => DOCX_REPORTS[layout].title?.() ?? `${DOCX_REPORTS[layout].kind}: ${primaryEffect()?.title || 'Untitled RCA'}`;
 
 // The report as a .docx blob. The charts in it are drawn into PNG pictures first.
 async function docxReport(layout) {
@@ -293,7 +295,7 @@ async function docxReport(layout) {
     pictures.set(svg, {id: n, rid: `rIdImage${n}`, name: `Figure ${n}`, w: png.w, h: png.h});
   }
   const w = new DocxWriter(pictures), body = w.children(box, {f: {}}).join('\n');
-  const {kind} = DOCX_REPORTS[layout], title = `${kind}: ${primaryEffect()?.title || 'Untitled RCA'}`;
+  const {kind} = DOCX_REPORTS[layout], title = docxTitle(layout);
   const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document ${W_NS} xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>
 ${body}
@@ -316,7 +318,7 @@ ${body}
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>`},
     {name: 'docProps/core.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <dc:title>${xmlText(title)}</dc:title><dc:subject>${xmlText(state.meta.rcaNumber)}</dc:subject><dc:creator>Causeway</dc:creator>
+  <dc:title>${xmlText(title)}</dc:title><dc:subject>${xmlText(DOCX_REPORTS[layout].subject?.() ?? state.meta.rcaNumber)}</dc:subject><dc:creator>Causeway</dc:creator>
   <dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString().slice(0, 19)}Z</dcterms:created></cp:coreProperties>`},
     {name: 'word/_rels/document.xml.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rel('rIdStyles', 'styles', 'styles.xml')}${rel('rIdNumbering', 'numbering', 'numbering.xml')}${rel('rIdFooter', 'footer', 'footer1.xml')}
@@ -331,7 +333,7 @@ ${body}
 
 async function exportDocx(layout) {
   showMenu(false);
-  const name = `${baseName()}-${DOCX_REPORTS[layout].file}.docx`;
+  const name = `${(DOCX_REPORTS[layout].base ?? baseName)()}-${DOCX_REPORTS[layout].file}.docx`;
   setStatus(`Writing ${name}…`);
   try {
     download(name, await docxReport(layout));
