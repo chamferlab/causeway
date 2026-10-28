@@ -10,7 +10,7 @@ Causeway is independent. Apollo Root Cause Analysis is a trademark of its owner;
 
 ## Run it
 
-Open **https://mauser1987.github.io/causeway/** in Chrome, Edge, or Firefox, or download [`index.html`](index.html) and open it from disk; it works the same offline. Choose **Load example** to see a finished RCA: high leakage on the single cartridge seal of pump P-101A. New to RCA? Start with **Learn the methods**, at the top of the left rail.
+Open **https://chamferlab.github.io/causeway/** in Chrome, Edge, or Firefox, or download [`index.html`](index.html) and open it from disk; it works the same offline. Choose **Load example** to see a finished RCA: high leakage on the single cartridge seal of pump P-101A. New to RCA? Start with **Learn the methods**, at the top of the left rail.
 
 RCAs are saved as files on your computer (see **Files** below). Nothing is sent anywhere, including from the hosted page. To serve it to colleagues from one computer, see [Host it for colleagues](#host-it-for-colleagues).
 
