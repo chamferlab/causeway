@@ -410,7 +410,7 @@ The application is one page with no server side, so hosting it means handing out
 
 1. Pick a computer that stays on during working hours and is on the same network as the people who will use it. Note its name (`hostname` in a terminal) or ask IT for a fixed address for it.
 2. Install Python 3.8 or later if it is missing: from [python.org](https://www.python.org/downloads/) on Windows (tick **Add python.exe to PATH**), or with the package manager on Linux. Nothing else is needed.
-3. Put the project on it: `git clone https://github.com/mauser1987/causeway.git`, or download the ZIP from GitHub and unpack it. A stable place such as `C:\causeway` or `/opt/causeway` is best. Only `index.html` and the `scripts/` folder are used, in those places relative to each other.
+3. Put the project on it: `git clone https://github.com/chamferlab/causeway.git`, or download the ZIP from GitHub and unpack it. A stable place such as `C:\causeway` or `/opt/causeway` is best. Only `index.html` and the `scripts/` folder are used, in those places relative to each other.
 
 ### 2. Start it and try it
 
