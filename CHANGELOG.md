@@ -6,6 +6,7 @@ Host it for colleagues.
 
 - `scripts/run_app.sh` (Linux) and `scripts/run_app.bat` (Windows) serve Causeway from one computer: `--lan` makes it reachable from the network, `--port` picks the port (8080 by default). Python 3.8 or later and nothing else; a rebuilt `index.html` is served without a restart.
 - The README explains preparing the host, the firewall, starting at boot, and what people should know about saving.
+- On Windows, `scripts/install_service.bat` installs it as an NSSM service that starts with Windows, logs to `logs\causeway.log`, and opens the firewall port; `scripts/update.bat` stops the service, pulls, and starts it again.
 
 ## v1.21 — 2026-10-27
 

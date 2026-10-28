@@ -431,7 +431,15 @@ On a managed work computer this step, and running a server at all, usually needs
 
 ### 4. Start it automatically
 
-- **Windows:** Task Scheduler → **Create Task** → trigger **At startup** → action **Start a program**: program `C:\causeway\scripts\run_app.bat`, arguments `--lan`, start in `C:\causeway`. Tick **Run whether user is logged on or not**.
+- **Windows, as a service with [NSSM](https://nssm.cc/):** put `nssm.exe` on the PATH, then from an administrator Command Prompt:
+
+  ```bat
+  scripts\install_service.bat                  rem service "Causeway" on port 8080
+  scripts\install_service.bat MyServiceName 9000
+  ```
+
+  It checks first (administrator, `nssm` on the PATH, Python 3.8 or later) and changes nothing if a check fails. Then it installs the service to run `scripts\serve.py --lan` with the full path of `python.exe`, starting with Windows, logging to `logs\causeway.log` (rotated at 1 MB), adds a firewall rule for the port, and starts it. Run it again to change the port: an existing service is set up afresh and restarted. Without a name it uses `CAUSEWAY_SERVICE`, or else `Causeway`. Remove it with `nssm remove Causeway confirm`.
+- **Windows, without NSSM:** Task Scheduler → **Create Task** → trigger **At startup** → action **Start a program**: program `C:\causeway\scripts\run_app.bat`, arguments `--lan`, start in `C:\causeway`. Tick **Run whether user is logged on or not**.
 - **Linux:** save this as `/etc/systemd/system/causeway.service`, with your own user name, then run `sudo systemctl enable --now causeway`:
 
   ```ini
@@ -461,6 +469,14 @@ Give them `http://HOST:8080/` to bookmark. A current Chrome, Edge, or Firefox on
 
 Run `git pull` in the folder, or replace `index.html` with the new one. The server does not need a restart, and people get the new version when they reload the page. Their browser storage is kept.
 
+With the NSSM service, run from an administrator Command Prompt:
+
+```bat
+scripts\update.bat                  rem or: scripts\update.bat MyServiceName
+```
+
+It checks first (administrator, `nssm` and `git` on the PATH, the service exists, no files edited on that machine) and changes nothing if a check fails. Then it stops the service, runs `git pull --ff-only`, lists the changes, and starts the service again, so a change to `scripts/serve.py` takes effect too. If the pull fails, the service is started again on the old version; if it does not start, the script prints how to go back (`git reset --hard <previous commit>`). There is nothing to back up: the host holds no RCAs.
+
 ### What this is and is not
 
 - It is plain HTTP for a trusted office network. Do not expose the port to the internet.
@@ -478,6 +494,7 @@ Run `git pull` in the folder, or replace `index.html` with the new one. The serv
 - `scripts/build.py` — builds `index.html`; standard library only. It refuses to build if the page references a remote resource.
 - `scripts/test-app.py` — Firefox regression tests; standard library only.
 - `scripts/serve.py` — serves `index.html` on this computer or the network; standard library only. `scripts/run_app.sh` and `scripts/run_app.bat` start it on Linux and Windows (see **Host it for colleagues**).
+- `scripts/install_service.bat` and `scripts/update.bat` — install Causeway as an NSSM service on Windows, and update it from git.
 
 ```
 python3 scripts/build.py      # after editing src/ or media/
