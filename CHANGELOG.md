@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.22 — 2026-10-28
+
+Host it for colleagues.
+
+- `scripts/run_app.sh` (Linux) and `scripts/run_app.bat` (Windows) serve Causeway from one computer: `--lan` makes it reachable from the network, `--port` picks the port (8080 by default). Python 3.8 or later and nothing else; a rebuilt `index.html` is served without a restart.
+- The README explains preparing the host, the firewall, starting at boot, and what people should know about saving.
+
 ## v1.21 — 2026-10-27
 
 DFMEA, a module of its own beside the RCA.

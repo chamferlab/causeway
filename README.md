@@ -12,7 +12,7 @@ Causeway is independent. Apollo Root Cause Analysis is a trademark of its owner;
 
 Open **https://mauser1987.github.io/causeway/** in Chrome, Edge, or Firefox, or download [`index.html`](index.html) and open it from disk; it works the same offline. Choose **Load example** to see a finished RCA: high leakage on the single cartridge seal of pump P-101A. New to RCA? Start with **Learn the methods**, at the top of the left rail.
 
-RCAs are saved as files on your computer (see **Files** below). Nothing is sent anywhere, including from the hosted page.
+RCAs are saved as files on your computer (see **Files** below). Nothing is sent anywhere, including from the hosted page. To serve it to colleagues from one computer, see [Host it for colleagues](#host-it-for-colleagues).
 
 ## Learn the methods
 
@@ -402,6 +402,72 @@ Stop point reasons are `outside-control`, `solution-found`, `no-evidence`, and `
 
 The page has no external references and uses the system fonts, and its Content Security Policy (`default-src 'none'`) makes the browser refuse any network request. It contains no third-party code: the Word documents and PowerPoint decks, the zip files they are, and the PDF are written by Causeway itself, in the browser.
 
+## Host it for colleagues
+
+The application is one page with no server side, so hosting it means handing out `index.html` from a computer that stays on. `scripts/serve.py` does that with Python alone. Everyone who opens the address gets the same Causeway; each person's RCAs and DFMEAs are saved as files on their own computer, and nothing they enter is sent to the host.
+
+### 1. Prepare the host computer
+
+1. Pick a computer that stays on during working hours and is on the same network as the people who will use it. Note its name (`hostname` in a terminal) or ask IT for a fixed address for it.
+2. Install Python 3.8 or later if it is missing: from [python.org](https://www.python.org/downloads/) on Windows (tick **Add python.exe to PATH**), or with the package manager on Linux. Nothing else is needed.
+3. Put the project on it: `git clone https://github.com/mauser1987/causeway.git`, or download the ZIP from GitHub and unpack it. A stable place such as `C:\causeway` or `/opt/causeway` is best. Only `index.html` and the `scripts/` folder are used, in those places relative to each other.
+
+### 2. Start it and try it
+
+```sh
+./scripts/run_app.sh --lan          # Windows: scripts\run_app.bat --lan, or double-click it
+```
+
+It prints the addresses, for example `http://pc-0123:8080/`. Open the `localhost` one on the host first, then the network one from another computer. Add `--port 9000` to use another port. Without `--lan` Causeway is served to the host only, which is handy for a quick check.
+
+### 3. Open the firewall
+
+If the page opens on the host but not from another computer, the host's firewall is blocking the port.
+
+- **Windows:** choose **Allow** for private networks when the prompt appears on first start, or run once in an administrator PowerShell: `New-NetFirewallRule -DisplayName "Causeway" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow -Profile Domain,Private`
+- **Linux (ufw):** `sudo ufw allow 8080/tcp`
+
+On a managed work computer this step, and running a server at all, usually needs IT's agreement; ask before you start.
+
+### 4. Start it automatically
+
+- **Windows:** Task Scheduler → **Create Task** → trigger **At startup** → action **Start a program**: program `C:\causeway\scripts\run_app.bat`, arguments `--lan`, start in `C:\causeway`. Tick **Run whether user is logged on or not**.
+- **Linux:** save this as `/etc/systemd/system/causeway.service`, with your own user name, then run `sudo systemctl enable --now causeway`:
+
+  ```ini
+  [Unit]
+  Description=Causeway
+  After=network-online.target
+
+  [Service]
+  User=YOUR_USER
+  WorkingDirectory=/opt/causeway
+  ExecStart=/usr/bin/python3 scripts/serve.py --lan
+  Restart=on-failure
+
+  [Install]
+  WantedBy=multi-user.target
+  ```
+
+### 5. Tell people the address
+
+Give them `http://HOST:8080/` to bookmark. A current Chrome, Edge, or Firefox on a desktop is needed. Tell them three things:
+
+- **Save** writes the RCA as a JSON file on their computer, and that file is the record. Over plain HTTP from another computer, browsers do not let a page pick and rewrite a file, so each save downloads a copy, as in Firefox; on the host's `localhost` address, Chrome and Edge save to the same file again.
+- The crash recovery copy in browser storage belongs to that address in that browser. If the host's name, address, or port changes, Causeway opens empty, so keep the address fixed and save to a file.
+- To hand an RCA to someone else, send them the file.
+
+### 6. Update it
+
+Run `git pull` in the folder, or replace `index.html` with the new one. The server does not need a restart, and people get the new version when they reload the page. Their browser storage is kept.
+
+### What this is and is not
+
+- It is plain HTTP for a trusted office network. Do not expose the port to the internet.
+- There are no accounts and no shared storage: people cannot see or edit each other's RCAs except through the files they share, and the host holds no RCAs to back up.
+- The page still makes no network request of its own once loaded (see **Offline**).
+- Any other web server works as well: publish `index.html` on IIS, nginx, or a SharePoint or intranet file area that serves HTML.
+
 ## Project files and development
 
 `index.html` is generated. Edit the sources and rebuild; do not edit the HTML by hand.
@@ -411,6 +477,7 @@ The page has no external references and uses the system fonts, and its Content S
 - `media/favicon.svg` — the tab icon.
 - `scripts/build.py` — builds `index.html`; standard library only. It refuses to build if the page references a remote resource.
 - `scripts/test-app.py` — Firefox regression tests; standard library only.
+- `scripts/serve.py` — serves `index.html` on this computer or the network; standard library only. `scripts/run_app.sh` and `scripts/run_app.bat` start it on Linux and Windows (see **Host it for colleagues**).
 
 ```
 python3 scripts/build.py      # after editing src/ or media/
