@@ -25,7 +25,7 @@ const attrs = o => Object.entries(o).filter(([, v]) => v !== undefined && v !== 
 
 function nodeMarkup(b, opts) {
   const C = opts.colors || CHART_COLORS, n = b.node, c = C[nodeLook(n)], {w, h} = b;
-  const isPrimary = n.id === state.problem.primaryEffectId;
+  const isPrimary = isRoot(n.id);
   const issue = opts.issues?.get(n.id);
   let s = `<g class="node" data-id="${n.id}" transform="translate(${b.x} ${b.y})"${opts.dimmed?.has(n.id) || opts.highlight && !opts.highlight.has(n.id) || opts.dragging?.id === n.id ? ' opacity="0.35"' : ''}>`;
   if (opts.highlight?.has(n.id) && opts.selectedId !== n.id) s += `<rect x="-6" y="-6" width="${w + 12}" height="${h + 12}" rx="12" fill="none" stroke="${C.highlight}" stroke-width="4"/>`;
@@ -33,18 +33,15 @@ function nodeMarkup(b, opts) {
   else if (issue === 'error') s += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="11" fill="none" stroke="${C.issue}" stroke-width="2" stroke-dasharray="5 4"/>`;
   s += `<rect width="${w}" height="${h}" rx="8" ${attrs({fill: c.fill, stroke: c.stroke, 'stroke-width': c.dash || n.kind === 'condition' ? 1.5 : isPrimary ? 2 : 1, 'stroke-dasharray': c.dash})}/>`;
   const type = CAUSE_TYPES[n.causeType]?.tag;
-  const kind = isPrimary ? KINDS.effect.label : statusBadge(n) ? type : [n.kind === 'effect' ? 'EFFECT' : treeStyle() ? STATUSES[n.status].label
+  const kind = isPrimary ? KINDS.effect.label : statusBadge(n) ? [n.status === 'ruled-out' && 'RULED OUT', type].filter(Boolean).join(' · ') : [n.kind === 'effect' ? 'EFFECT' : treeStyle() ? STATUSES[n.status].label
     : n.kind === 'cause' ? 'CAUSE · CHOOSE A TYPE' : KINDS[n.kind].label, type].filter(Boolean).join(' · ');
   const kl = kindLine(n);
   if (kl) s += `<text x="${NODE_PAD_X}" y="${NODE_PAD_Y + 9}" font-size="9.5" font-weight="700" letter-spacing="0.8" fill="${c.sub}">${kind}</text>`;
   s += `<text x="${NODE_PAD_X}" font-size="${TITLE_SIZE}" font-weight="600" fill="${c.text}">`;
   b.lines.forEach((line, i) => { s += `<tspan x="${NODE_PAD_X}" y="${NODE_PAD_Y + kl + TITLE_LINE * i + 12}">${escapeHtml(line)}</tspan>`; });
   s += '</text>';
-  // A ruled-out cause in a cause tree is struck through.
-  if (isRuledOut(n)) b.lines.forEach((line, i) => {
-    const y = NODE_PAD_Y + kl + TITLE_LINE * i + 8;
-    s += `<line x1="${NODE_PAD_X}" y1="${y}" x2="${NODE_PAD_X + textWidth(line, TITLE_SIZE, 600)}" y2="${y}" stroke="${c.text}" stroke-width="1.2"/>`;
-  });
+  // A ruled-out cause in a cause tree is not struck through, so it stays readable: it is grey, says
+  // RULED OUT on its top line, has the ✕ badge, and its branch is dashed.
 
   const f = b.foot;
   if (hasFoot(f)) {
@@ -191,9 +188,9 @@ function render() {
   picked = new Set([...picked].filter(id => layout.boxes.has(id)));
   if (picked.size < 2 || !picked.has(selected)) picked.clear();
   if (highlight && !evidenceById(highlight)) highlight = null;
-  const issues = ruleIssues(), causes = state.nodes.length - 1;
+  const issues = ruleIssues(), causes = state.nodes.length - rootIds().length;
   $('count').textContent = `${causes} cause${causes === 1 ? '' : 's'} · ${state.evidence.length} evidence item${state.evidence.length === 1 ? '' : 's'}`;
-  for (const [id, n] of [['railCauses', causes], ['railWhys', state.fiveWhys.length], ['railFish', state.fishbones.length], ['railSpec', specFacts().length], ['railCompare', compareDiffs().length], ['railTimeline', state.timelines.length], ['railEquipment', equipmentFilled()], ['railTeam', state.meta.team.length], ['railEvidence', state.evidence.length], ['railRuledOut', state.ruledOut.length + treeRuledOut().length],
+  for (const [id, n] of [['railCauses', causes], ['railWhys', state.fiveWhys.length], ['railFish', state.fishbones.length], ['railSpec', allSpecs().reduce((sum, sp) => sum + specFacts(sp).length, 0)], ['railCompare', compareDiffs().length], ['railTimeline', state.timelines.length], ['railEquipment', equipmentFilled()], ['railTeam', state.meta.team.length], ['railEvidence', state.evidence.length], ['railRuledOut', state.ruledOut.length + treeRuledOut().length],
     ['railSolutions', state.solutions.length], ['railActions', state.actions.length]]) $(id).textContent = n;
   renderIssues(issues);
   renderTitle();

@@ -732,7 +732,7 @@ textarea.answer { font-size: 14px; font-weight: 600; min-height: 32px; resize: n
 .legend s { color: var(--muted); }
 .kind-chip.cause, .kind-chip.possible { background: var(--warn-soft); color: var(--warn-ink); border: 1px dashed var(--warn-line); }
 .kind-chip.confirmed { background: var(--accent); color: #fff; }
-.kind-chip.ruled { background: var(--line-soft); color: var(--muted); text-decoration: line-through; }
+.kind-chip.ruled { background: var(--line-soft); color: var(--muted); }
 .segmented.status .possible[aria-pressed=true] { background: #b45309; }
 .segmented.status .ruled-out[aria-pressed=true] { background: #52606d; }
 .style-cards { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
@@ -871,3 +871,7 @@ textarea.answer { font-size: 14px; font-weight: 600; min-height: 32px; resize: n
 @media (max-width: 1100px) {
   .df-structure { grid-template-columns: minmax(0, 1fr) 290px; }
 }
+
+/* More than one problem: the tabs that pick one problem's Is / Is Not. */
+.problem-tabs { margin: 0 0 8px; }
+.problem-tabs button { padding: 7px 10px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -744,7 +744,7 @@ textarea.answer { font-size: 14px; font-weight: 600; min-height: 32px; resize: n
 .legend s { color: var(--muted); }
 .kind-chip.cause, .kind-chip.possible { background: var(--warn-soft); color: var(--warn-ink); border: 1px dashed var(--warn-line); }
 .kind-chip.confirmed { background: var(--accent); color: #fff; }
-.kind-chip.ruled { background: var(--line-soft); color: var(--muted); text-decoration: line-through; }
+.kind-chip.ruled { background: var(--line-soft); color: var(--muted); }
 .segmented.status .possible[aria-pressed=true] { background: #b45309; }
 .segmented.status .ruled-out[aria-pressed=true] { background: #52606d; }
 .style-cards { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
@@ -883,6 +883,10 @@ textarea.answer { font-size: 14px; font-weight: 600; min-height: 32px; resize: n
 @media (max-width: 1100px) {
   .df-structure { grid-template-columns: minmax(0, 1fr) 290px; }
 }
+
+/* More than one problem: the tabs that pick one problem's Is / Is Not. */
+.problem-tabs { margin: 0 0 8px; }
+.problem-tabs button { padding: 7px 10px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -966,7 +970,7 @@ textarea.answer { font-size: 14px; font-weight: 600; min-height: 32px; resize: n
       <li><span class="sw effect"></span>Primary effect</li>
       <li><span class="sw possible"></span><span class="sw badge h">H</span>Hypothesis, to test</li>
       <li><span class="sw confirmed"></span><span class="sw badge ok">✓</span>Confirmed</li>
-      <li><span class="sw ruled"></span><span class="sw badge no">✕</span><s>Ruled out</s></li>
+      <li><span class="sw ruled"></span><span class="sw badge no">✕</span>Ruled out</li>
       <li><span class="sw q">H</span>No evidence yet</li>
       <li><span class="sw code">E3</span>Cited evidence</li>
       <li><span class="sw shared"></span>Shared cause link</li>
@@ -998,6 +1002,7 @@ textarea.answer { font-size: 14px; font-weight: 600; min-height: 32px; resize: n
       <button id="addCondition" class="add-condition" title="Add a condition cause to the selected effect">+ Condition <kbd>Shift+Ins</kbd></button>
       <button id="linkCause" title="Link a node already on the chart as a further cause of the selected effect">Link cause <kbd>Alt+L</kbd></button>
       <button id="summarise" title="One new cause shared by the selected causes, drawn to their right with a brace. Drag a box on the canvas to select several">Summary <kbd>Alt+G</kbd></button>
+      <button id="addTree" title="Add another problem: a second primary effect with its own tree, problem statement, and Is / Is Not, in this same investigation">+ Problem</button>
       <button id="deleteNode" class="danger" title="Delete the selected cause">Delete <kbd>Del</kbd></button>
       <span class="sep" aria-hidden="true"></span>
       <button id="zoomOut" title="Zoom out" aria-label="Zoom out">−</button>
@@ -1288,7 +1293,7 @@ function blankState(style = 'apollo') {
     meta: {rcaNumber: '', equipmentTag: '', sealType: '', style, leadId: '', team: [], dates: {opened: today(), eventDate: '', closed: ''},
       status: 'open', customerRef: '', revision: '', signoff: blankSignoff()},
     problem: {primaryEffectId: effect.id, when: '', where: '', readAcross: '', significance: {safety: '', environment: '', productionCost: '', reliability: ''}},
-    equipment: {}, nodes: [effect], links: [], evidence: [], ruledOut: [], solutions: [], actions: [], fiveWhys: [], fishbones: [], timelines: [], specification: blankSpecification(), comparison: blankComparison(),
+    equipment: {}, nodes: [effect], links: [], evidence: [], ruledOut: [], solutions: [], actions: [], fiveWhys: [], fishbones: [], timelines: [], specification: blankSpecification(), moreProblems: [], comparison: blankComparison(),
     counters: {evidence: 1},
   };
 }
@@ -1309,6 +1314,21 @@ let appModule = 'rca';         // the module shown: 'rca' or 'dfmea' (see 20-dfm
 
 const byId = id => state.nodes.find(n => n.id === id);
 const primaryEffect = () => byId(state.problem.primaryEffectId);
+// One investigation can address more than one problem, for example two failures in one sequence of
+// events. The first is state.problem with state.specification; each further one (state.moreProblems)
+// has its own primary effect, and so its own tree, drawn below the others, its own when and where, and
+// its own Is / Is Not. Everything else (timeline, evidence, team, solutions, actions) is shared.
+const blankProblem = effectId => ({effectId, when: '', where: '', specification: blankSpecification()});
+const rootIds = () => [state.problem.primaryEffectId, ...state.moreProblems.map(p => p.effectId)].filter(byId);
+const isRoot = id => id === state.problem.primaryEffectId || state.moreProblems.some(p => p.effectId === id);
+const problemOf = id => id === state.problem.primaryEffectId ? state.problem : state.moreProblems.find(p => p.effectId === id);
+const specOf = id => id === state.problem.primaryEffectId ? state.specification : state.moreProblems.find(p => p.effectId === id)?.specification;
+const allSpecs = () => rootIds().map(specOf);
+// "Problem 2" and so on; the first is just "the problem" while it is the only one.
+const problemName = id => `Problem ${rootIds().indexOf(id) + 1}`;
+let specRoot = null;           // the problem whose Is / Is Not the page shows; the first when unset
+const specOn = () => rootIds().includes(specRoot) ? specRoot : state.problem.primaryEffectId;
+const curSpec = () => specOf(specOn());
 const evidenceById = id => state.evidence.find(e => e.id === id);
 const treeStyle = () => state.meta.style === 'tree';
 
@@ -1402,7 +1422,7 @@ function reaches(from, to) {
 // Why `causeId` cannot become a cause of `effectId`, or null when it can.
 function linkProblem(effectId, causeId) {
   if (effectId === causeId) return 'A cause cannot cause itself.';
-  if (causeId === state.problem.primaryEffectId) return 'The primary effect cannot be a cause.';
+  if (isRoot(causeId)) return 'A primary effect cannot be a cause.';
   if (state.links.some(l => l.effectId === effectId && l.causeId === causeId)) return 'It is already a cause of this effect.';
   if (reaches(causeId, effectId)) return 'That would make a loop: the effect is already among its causes.';
   return null;
@@ -1412,6 +1432,15 @@ function addLink(effectId, causeId) {
   const link = {id: uuid(), effectId, causeId};
   state.links.push(link);
   return link;
+}
+
+// A further problem in the same investigation: a new primary effect with its own tree, drawn below the
+// others, and its own problem statement and Is / Is Not.
+function addTree(title = 'Describe the primary effect') {
+  const n = blankNode('effect', title);
+  state.nodes.push(n);
+  state.moreProblems.push(blankProblem(n.id));
+  return n;
 }
 
 // In a cause tree a new cause has no type; it is given one if the RCA moves to Apollo.
@@ -1690,9 +1719,9 @@ function addAction(solutionId = '') {
 }
 const isOverdue = a => a.due && a.due < today() && !ACTION_DONE.includes(a.status) && a.status !== 'cancelled';
 
-// Nodes reachable from the primary effect.
-function reachable(links = state.links) {
-  const seen = new Set(), stack = [state.problem.primaryEffectId];
+// Nodes reachable from the primary effects.
+function reachable(links = state.links, roots = rootIds()) {
+  const seen = new Set(), stack = [...roots];
   while (stack.length) {
     const id = stack.pop();
     if (seen.has(id)) continue;
@@ -1707,7 +1736,7 @@ function reachable(links = state.links) {
 function deletionSet(...ids) {
   ids = ids.filter(id => id !== state.problem.primaryEffectId);
   const gone = new Set(ids), remaining = state.links.filter(l => !gone.has(l.effectId) && !gone.has(l.causeId));
-  const keep = reachable(remaining);
+  const keep = reachable(remaining, rootIds().filter(id => !gone.has(id)));
   return ids.length ? [...ids, ...state.nodes.filter(n => !gone.has(n.id) && !keep.has(n.id)).map(n => n.id)] : [];
 }
 function deleteNodes(ids) {
@@ -1732,9 +1761,10 @@ function deleteNodes(ids) {
       if (n) Object.assign(ev, {text: n.title, kind: ['action', 'condition'].includes(n.kind) ? n.kind : ev.kind, evidenceIds: [...n.evidenceIds], nodeId: null});
     }
   }
-  state.specification.tests = state.specification.tests.filter(t => !gone.has(t.causeId));
+  for (const sp of allSpecs()) sp.tests = sp.tests.filter(t => !gone.has(t.causeId));
   for (const r of state.comparison.rows) if (gone.has(r.nodeId)) r.nodeId = null;
   state.nodes = state.nodes.filter(n => !gone.has(n.id));
+  state.moreProblems = state.moreProblems.filter(p => !gone.has(p.effectId));
   state.links = state.links.filter(l => !gone.has(l.effectId) && !gone.has(l.causeId));
   for (const s of state.solutions) s.causeIds = s.causeIds.filter(id => !gone.has(id));
   for (const id of gone) collapsed.delete(id);
@@ -1784,13 +1814,13 @@ function placeCause(effectId, causeId, siblingId, after) {
 
 // Why the causes cannot be summarised, or null when they can. Returns their effect with `effect`.
 function summaryEffect(ids, prefer) {
-  if (ids.length < 2 || ids.includes(state.problem.primaryEffectId)) return null;
+  if (ids.length < 2 || ids.some(isRoot)) return null;
   const common = ids.map(id => new Set(effectLinks(id).map(l => l.effectId))).reduce((a, b) => new Set([...a].filter(id => b.has(id))));
   return common.has(prefer) ? prefer : [...common][0] ?? null;
 }
 function summaryProblem(ids, prefer) {
   if (ids.length < 2) return 'Select two or more causes to summarise: drag a box around them.';
-  if (ids.includes(state.problem.primaryEffectId)) return 'The primary effect cannot be summarised.';
+  if (ids.some(isRoot)) return 'A primary effect cannot be summarised.';
   if (ids.some(id => causeLinks(id).length)) return 'Only causes at the end of a branch can be summarised: these have causes of their own.';
   return summaryEffect(ids, prefer) ? null : 'Only causes of the same effect can be summarised.';
 }
@@ -1838,7 +1868,7 @@ function tidyOrGroups() {
 function alternativesProblem(ids, effectId) {
   if (treeStyle()) return 'In a cause tree every branch is an alternative already.';
   if (ids.length < 2) return 'Select two or more causes of one effect to make them alternatives: drag a box around them.';
-  if (ids.includes(state.problem.primaryEffectId)) return 'The primary effect cannot be an alternative.';
+  if (ids.some(isRoot)) return 'A primary effect cannot be an alternative.';
   if (!effectId || ids.some(id => !state.links.some(l => l.effectId === effectId && l.causeId === id))) return 'Only causes of the same effect can be alternatives.';
   return null;
 }
@@ -1891,12 +1921,18 @@ function issuesAfterSwitch(style) {
 // it could be but is not. Each candidate cause is then tested against every fact: does it explain why
 // the problem is here and not there? A fact is a question with either side answered.
 
-const specRow = id => state.specification.rows.find(r => r.id === id);
-const specFacts = () => state.specification.rows.filter(r => r.is.trim() || r.isNot.trim());
-const specLabel = r => `${SPEC_DIMS[r.dim]} ${state.specification.rows.filter(x => x.dim === r.dim).indexOf(r) + 1}`;
-const specTest = id => state.specification.tests.find(t => t.causeId === id);
-function specResult(test) {
-  const facts = specFacts(), mark = r => test.marks[r.id] || '';
+// Each problem has its own specification; without one given, these act on the one the page shows.
+const specRow = id => allSpecs().flatMap(sp => sp.rows).find(r => r.id === id);
+// The problem a question belongs to.
+const specRootOfRow = id => rootIds().find(root => specOf(root).rows.some(r => r.id === id));
+const specFacts = (sp = curSpec()) => sp.rows.filter(r => r.is.trim() || r.isNot.trim());
+const specLabel = r => {
+  const sp = allSpecs().find(x => x.rows.includes(r)) || curSpec();
+  return `${SPEC_DIMS[r.dim]} ${sp.rows.filter(x => x.dim === r.dim).indexOf(r) + 1}`;
+};
+const specTest = (id, sp = curSpec()) => sp.tests.find(t => t.causeId === id);
+function specResult(test, sp = curSpec()) {
+  const facts = specFacts(sp), mark = r => test.marks[r.id] || '';
   return {facts, no: facts.filter(r => mark(r) === 'no'), only: facts.filter(r => mark(r) === 'if'), open: facts.filter(r => !mark(r))};
 }
 const specSummary = res => res.no.length ? `Fails ${plural(res.no.length, 'fact')}`
@@ -1983,7 +2019,7 @@ const isRuledOut = n => treeStyle() && isCause(n) && n.status === 'ruled-out';
 // In a cause tree, the ruled-out causes on the tree; they are listed with the causes ruled out.
 const treeRuledOut = () => state.nodes.filter(isRuledOut);
 // The palette entry a node is drawn with.
-const nodeLook = n => n.id === state.problem.primaryEffectId || n.kind === 'effect' ? 'effect'
+const nodeLook = n => isRoot(n.id) || n.kind === 'effect' ? 'effect'
   : treeStyle() ? (n.status === 'ruled-out' ? 'ruled' : n.status) : n.kind;
 
 // Every rule issue: the chart's, by its style, and the records'. A node's issue has a nodeId; a
@@ -2018,10 +2054,11 @@ function causeIssues() {
     }
   }
   // A cause that fails a fact of the Is / Is Not cannot be the cause, or the fact is wrong.
-  for (const t of state.specification.tests) {
-    const n = byId(t.causeId), fails = n && live.has(n.id) && !(tree && n.status === 'ruled-out') ? specResult(t).no : [];
+  const several = rootIds().length > 1;
+  for (const root of rootIds()) for (const t of specOf(root).tests) {
+    const n = byId(t.causeId), fails = n && live.has(n.id) && !(tree && n.status === 'ruled-out') ? specResult(t, specOf(root)).no : [];
     if (fails.length) issues.push({nodeId: n.id, level: 'warning', code: 'spec-fails',
-      text: `Does not explain ${fails.map(specLabel).join(', ')} of the Is / Is Not: rule it out, or check the fact`});
+      text: `Does not explain ${fails.map(specLabel).join(', ')} of the Is / Is Not${several ? ` of ${problemName(root)}` : ''}: rule it out, or check the fact`});
   }
   // Once root causes are typed, the 8D questions not yet answered.
   const typed = new Set(state.nodes.filter(n => live.has(n.id) && isCause(n) && !(tree && n.status === 'ruled-out')).map(n => n.causeType));
@@ -2050,9 +2087,11 @@ function recordIssues() {
     'Ruled out without a reason: write the evidence or test that ruled it out');
   if (state.meta.status === 'closed') for (const b of closeBlockers()) add('team', 'status', 'RCA status', 'warning', 'closed-open', `Closed, but: ${b}`);
   // Thin IS NOT data is the most common weakness of a problem specification.
-  const stated = state.specification.rows.filter(r => r.is.trim()), bare = stated.filter(r => !r.isNot.trim());
-  if (stated.length >= 3 && bare.length * 2 > stated.length) add('spec', bare[0].id, 'Is / Is Not', 'info', 'spec-thin',
-    `${plural(bare.length, 'fact')} without an IS NOT: for each, say where, when, or what the problem could be but is not`);
+  for (const root of rootIds()) {
+    const stated = specOf(root).rows.filter(r => r.is.trim()), bare = stated.filter(r => !r.isNot.trim());
+    if (stated.length >= 3 && bare.length * 2 > stated.length) add('spec', bare[0].id, rootIds().length > 1 ? `Is / Is Not, ${problemName(root)}` : 'Is / Is Not', 'info', 'spec-thin',
+      `${plural(bare.length, 'fact')} without an IS NOT: for each, say where, when, or what the problem could be but is not`);
+  }
   for (const s of state.solutions) {
     const title = s.title || 'Untitled solution', actions = actionsOf(s.id).filter(a => a.status !== 'cancelled' && a.kind !== 'containment');
     if (s.decision !== 'reject' && !s.causeIds.some(byId)) add('solutions', s.id, title, 'warning', 'solution-cause', 'Attacks no cause: link the causes it removes');
@@ -2167,9 +2206,9 @@ function nodeFoot(n, hidden) {
 const hasFoot = f => f.codes.length || f.controllable || f.stop || f.hidden;
 
 // In a cause tree a cause has no kind label: its status badge in the corner says it. The label line
-// stays for its root cause type, when it has one.
+// stays for its root cause type, when it has one, and says RULED OUT on a ruled-out cause.
 const statusBadge = n => treeStyle() && isCause(n);
-const kindLine = n => statusBadge(n) && !n.causeType ? 0 : KIND_LINE;
+const kindLine = n => statusBadge(n) && !n.causeType && n.status !== 'ruled-out' ? 0 : KIND_LINE;
 
 function nodeSize(n, hidden) {
   const lines = wrapText(n.title.trim() || 'Untitled', NODE_W - 2 * NODE_PAD_X - (statusBadge(n) ? BADGE_ROOM : 0), TITLE_SIZE, 600);
@@ -2179,10 +2218,9 @@ function nodeSize(n, hidden) {
 }
 
 function computeLayout() {
-  const primaryId = state.problem.primaryEffectId;
-  // Roots: the primary effect, then any node no effect links to (only in hand-edited files).
-  const linked = new Set(state.links.map(l => l.causeId));
-  const roots = [primaryId, ...state.nodes.filter(n => n.id !== primaryId && !linked.has(n.id)).map(n => n.id)].filter(byId);
+  // Roots: the primary effects, one tree each, then any node no effect links to (only in hand-edited files).
+  const linked = new Set(state.links.map(l => l.causeId)), trees = rootIds();
+  const roots = [...trees, ...state.nodes.filter(n => !isRoot(n.id) && !linked.has(n.id)).map(n => n.id)];
 
   // Visible nodes: everything reached without passing through a collapsed node.
   const visible = new Set(), stack = [...roots];
@@ -2460,7 +2498,7 @@ const attrs = o => Object.entries(o).filter(([, v]) => v !== undefined && v !== 
 
 function nodeMarkup(b, opts) {
   const C = opts.colors || CHART_COLORS, n = b.node, c = C[nodeLook(n)], {w, h} = b;
-  const isPrimary = n.id === state.problem.primaryEffectId;
+  const isPrimary = isRoot(n.id);
   const issue = opts.issues?.get(n.id);
   let s = `<g class="node" data-id="${n.id}" transform="translate(${b.x} ${b.y})"${opts.dimmed?.has(n.id) || opts.highlight && !opts.highlight.has(n.id) || opts.dragging?.id === n.id ? ' opacity="0.35"' : ''}>`;
   if (opts.highlight?.has(n.id) && opts.selectedId !== n.id) s += `<rect x="-6" y="-6" width="${w + 12}" height="${h + 12}" rx="12" fill="none" stroke="${C.highlight}" stroke-width="4"/>`;
@@ -2468,18 +2506,15 @@ function nodeMarkup(b, opts) {
   else if (issue === 'error') s += `<rect x="-5" y="-5" width="${w + 10}" height="${h + 10}" rx="11" fill="none" stroke="${C.issue}" stroke-width="2" stroke-dasharray="5 4"/>`;
   s += `<rect width="${w}" height="${h}" rx="8" ${attrs({fill: c.fill, stroke: c.stroke, 'stroke-width': c.dash || n.kind === 'condition' ? 1.5 : isPrimary ? 2 : 1, 'stroke-dasharray': c.dash})}/>`;
   const type = CAUSE_TYPES[n.causeType]?.tag;
-  const kind = isPrimary ? KINDS.effect.label : statusBadge(n) ? type : [n.kind === 'effect' ? 'EFFECT' : treeStyle() ? STATUSES[n.status].label
+  const kind = isPrimary ? KINDS.effect.label : statusBadge(n) ? [n.status === 'ruled-out' && 'RULED OUT', type].filter(Boolean).join(' · ') : [n.kind === 'effect' ? 'EFFECT' : treeStyle() ? STATUSES[n.status].label
     : n.kind === 'cause' ? 'CAUSE · CHOOSE A TYPE' : KINDS[n.kind].label, type].filter(Boolean).join(' · ');
   const kl = kindLine(n);
   if (kl) s += `<text x="${NODE_PAD_X}" y="${NODE_PAD_Y + 9}" font-size="9.5" font-weight="700" letter-spacing="0.8" fill="${c.sub}">${kind}</text>`;
   s += `<text x="${NODE_PAD_X}" font-size="${TITLE_SIZE}" font-weight="600" fill="${c.text}">`;
   b.lines.forEach((line, i) => { s += `<tspan x="${NODE_PAD_X}" y="${NODE_PAD_Y + kl + TITLE_LINE * i + 12}">${escapeHtml(line)}</tspan>`; });
   s += '</text>';
-  // A ruled-out cause in a cause tree is struck through.
-  if (isRuledOut(n)) b.lines.forEach((line, i) => {
-    const y = NODE_PAD_Y + kl + TITLE_LINE * i + 8;
-    s += `<line x1="${NODE_PAD_X}" y1="${y}" x2="${NODE_PAD_X + textWidth(line, TITLE_SIZE, 600)}" y2="${y}" stroke="${c.text}" stroke-width="1.2"/>`;
-  });
+  // A ruled-out cause in a cause tree is not struck through, so it stays readable: it is grey, says
+  // RULED OUT on its top line, has the ✕ badge, and its branch is dashed.
 
   const f = b.foot;
   if (hasFoot(f)) {
@@ -2626,9 +2661,9 @@ function render() {
   picked = new Set([...picked].filter(id => layout.boxes.has(id)));
   if (picked.size < 2 || !picked.has(selected)) picked.clear();
   if (highlight && !evidenceById(highlight)) highlight = null;
-  const issues = ruleIssues(), causes = state.nodes.length - 1;
+  const issues = ruleIssues(), causes = state.nodes.length - rootIds().length;
   $('count').textContent = `${causes} cause${causes === 1 ? '' : 's'} · ${state.evidence.length} evidence item${state.evidence.length === 1 ? '' : 's'}`;
-  for (const [id, n] of [['railCauses', causes], ['railWhys', state.fiveWhys.length], ['railFish', state.fishbones.length], ['railSpec', specFacts().length], ['railCompare', compareDiffs().length], ['railTimeline', state.timelines.length], ['railEquipment', equipmentFilled()], ['railTeam', state.meta.team.length], ['railEvidence', state.evidence.length], ['railRuledOut', state.ruledOut.length + treeRuledOut().length],
+  for (const [id, n] of [['railCauses', causes], ['railWhys', state.fiveWhys.length], ['railFish', state.fishbones.length], ['railSpec', allSpecs().reduce((sum, sp) => sum + specFacts(sp).length, 0)], ['railCompare', compareDiffs().length], ['railTimeline', state.timelines.length], ['railEquipment', equipmentFilled()], ['railTeam', state.meta.team.length], ['railEvidence', state.evidence.length], ['railRuledOut', state.ruledOut.length + treeRuledOut().length],
     ['railSolutions', state.solutions.length], ['railActions', state.actions.length]]) $(id).textContent = n;
   renderIssues(issues);
   renderTitle();
@@ -2734,10 +2769,12 @@ function renderRcaProperties(box) {
     <div class="panel-title">RCA</div>
     ${field('RCA number', 'rcaNumber', state.meta.rcaNumber, 'placeholder="e.g. RCA-2026-014"')}
     ${field('Equipment / tag', 'equipmentTag', state.meta.equipmentTag, 'placeholder="e.g. P-101A"')}
-    ${area('Primary effect', 'primaryTitle', primaryEffect()?.title || '', 'rows="2" style="min-height:44px"')}
+    ${area(state.moreProblems.length ? 'Primary effect, problem 1' : 'Primary effect', 'primaryTitle', primaryEffect()?.title || '', 'rows="2" style="min-height:44px"')}
+    ${rootIds().slice(1).map(id => `<label class="field">Primary effect, ${problemName(id).toLowerCase()}<textarea data-root="${id}" rows="2" style="min-height:44px">${escapeHtml(byId(id).title)}</textarea></label>`).join('')}
+    <button class="button block" id="inspAddTree" title="A second problem in this investigation: its own primary effect and tree, problem statement, and Is / Is Not">+ Add another problem</button>
     <div class="field">Chart style</div>
     ${styleCards()}
-    <p class="note">${state.nodes.length - 1} causes · ${state.evidence.length} evidence items · ${issues.filter(i => i.level === 'error').length} rule errors</p>
+    <p class="note">${state.nodes.length - rootIds().length} causes · ${state.evidence.length} evidence items · ${issues.filter(i => i.level === 'error').length} rule errors</p>
     ${collapsed.size ? `<button class="button block" id="expandAll">Expand all branches (${collapsed.size} collapsed)</button>` : ''}
     ${shiftedNodes().length ? `<button class="button block" id="resetShifts" style="margin-top:8px" title="Put the nodes moved up or down by hand back where the layout places them">Put back ${plural(shiftedNodes().length, 'node')} moved by hand</button>` : ''}
     <div class="section">
@@ -2790,10 +2827,12 @@ function renderRcaProperties(box) {
   $('rcaNumber').oninput = e => { state.meta.rcaNumber = e.target.value; renderTitle(); persist('rcaNumber'); };
   $('equipmentTag').oninput = e => { state.meta.equipmentTag = e.target.value; renderTitle(); persist('equipmentTag'); };
   $('primaryTitle').oninput = e => { primaryEffect().title = e.target.value; refreshChart(); persist('title:' + state.problem.primaryEffectId); };
+  box.querySelectorAll('[data-root]').forEach(t => t.oninput = () => { byId(t.dataset.root).title = t.value; refreshChart(); persist('title:' + t.dataset.root); });
+  $('inspAddTree').onclick = addTreeAndSelect;
 }
 
 function renderNodeProperties(box, n) {
-  const isPrimary = n.id === state.problem.primaryEffectId;
+  const isPrimary = isRoot(n.id);
   const causes = causesOf(n.id), effects = effectsOf(n.id);
   const issues = ruleIssues().filter(i => i.nodeId === n.id);
   const evidence = n.evidenceIds.map(evidenceById).filter(Boolean);
@@ -2861,7 +2900,7 @@ function renderNodeProperties(box, n) {
     </div>
     ${isPrimary ? '' : `<div class="section">
       <div class="panel-title">Supports</div>
-      <ul class="cause-list">${effects.map(e => `<li class="with-action"><button data-goto="${e.id}">${swatch(e.id === state.problem.primaryEffectId ? {kind: 'effect'} : e)}${escapeHtml(e.title)}</button>${effects.length > 1
+      <ul class="cause-list">${effects.map(e => `<li class="with-action"><button data-goto="${e.id}">${swatch(isRoot(e.id) ? {kind: 'effect'} : e)}${escapeHtml(e.title)}</button>${effects.length > 1
         ? `<button class="unlink" data-unlink-effect="${e.id}" title="Stop this being a cause of “${escapeHtml(e.title)}”" aria-label="Unlink from ${escapeHtml(e.title)}">×</button>` : ''}</li>`).join('')}</ul>
       ${effects.length > 1 ? `<p class="note">A shared cause: it ${tree ? 'may explain' : 'is needed for'} each of these effects.</p>` : ''}
       <button class="button block" id="inspMove" style="margin-top:8px" title="Move under another effect (Alt+M), or drag the node onto it">Move to another effect</button>
@@ -3100,6 +3139,15 @@ function addSiblingToSelected() {
   const sibling = addCause(effectId, ['action', 'condition'].includes(n.kind) ? n.kind : 'action');
   placeCause(effectId, sibling.id, n.id, true);
   addedCause(sibling, false);
+}
+// A further problem: a second primary effect, with its own tree, in the same investigation; its title ready to type.
+function addTreeAndSelect() {
+  const n = addTree();
+  picked.clear(); selected = n.id;
+  if (record !== 'chart') showRecord('chart');
+  render(); persist();
+  scrollToNode(n.id); focusTitle();
+  setStatus(`Added ${problemName(n.id)}: name its primary effect, then add its causes with Tab. Its when, where, and Is / Is Not have their own pages`);
 }
 function addedCause(n, edit) {
   selected = n.id;
@@ -3418,6 +3466,7 @@ function unlinkFrom(effectId, causeId) {
 $('addAction').onclick = () => addCauseToSelected('action');
 $('addCondition').onclick = () => addCauseToSelected('condition');
 $('deleteNode').onclick = deleteSelected;
+$('addTree').onclick = addTreeAndSelect;
 $('linkCause').onclick = startLinking;
 $('summarise').onclick = summariseSelected;
 $('cancelLink').onclick = cancelLinking;
@@ -3768,6 +3817,12 @@ function normalizeProject(p) {
     offsetY: Number.isFinite(n.offsetY) ? n.offsetY : 0, causeType: n.causeType in CAUSE_TYPES ? n.causeType : '', summary: n.summary === true,
     evidenceIds: Array.isArray(n.evidenceIds) ? n.evidenceIds : []}));
   if (!s.nodes.some(n => n.id === s.problem.primaryEffectId)) throw Error('The primary effect is missing.');
+  // Further problems: each with a primary effect that is on the chart, is no cause, and is not taken.
+  const causeIds = new Set(s.links.map(l => l?.causeId)), taken = new Set([s.problem.primaryEffectId]);
+  s.moreProblems = (Array.isArray(p.moreProblems) ? p.moreProblems : []).filter(x => typeof x?.effectId === 'string' && !causeIds.has(x.effectId)
+    && !taken.has(x.effectId) && taken.add(x.effectId) && s.nodes.some(n => n.id === x.effectId))
+    .map(x => ({effectId: x.effectId, when: typeof x.when === 'string' ? x.when : '', where: typeof x.where === 'string' ? x.where : '', specification: x.specification}));
+  delete s.problem.moreEffectIds;
   s.meta.team = Array.isArray(s.meta.team) ? s.meta.team.filter(m => m?.id) : [];
   s.meta.status = p.meta?.status in RCA_STATUS ? p.meta.status : 'open';
   for (const k of ['customerRef', 'revision']) if (typeof s.meta[k] !== 'string') s.meta[k] = '';
@@ -3794,15 +3849,18 @@ function normalizeProject(p) {
         ruledOutId: !nodeIds.has(c.nodeId) && ruledIds.has(c.ruledOutId) ? c.ruledOutId : null,
         parentId: top.has(c.parentId) ? c.parentId : null}))};
     })}));
-  const spec = p.specification, str = v => typeof v === 'string' ? v : '';
-  if (Array.isArray(spec?.rows)) {
+  const str = v => typeof v === 'string' ? v : '', roots = new Set([s.problem.primaryEffectId, ...s.moreProblems.map(x => x.effectId)]);
+  const normalSpec = spec => {
+    if (!Array.isArray(spec?.rows)) return blankSpecification();
     const rows = spec.rows.filter(r => r?.id).map(r => ({id: r.id, dim: r.dim in SPEC_DIMS ? r.dim : 'what', question: str(r.question), is: str(r.is), isNot: str(r.isNot),
       distinction: str(r.distinction), change: str(r.change)}));
     const rowIds = new Set(rows.map(r => r.id)), tested = new Set();
-    const tests = (Array.isArray(spec.tests) ? spec.tests : []).filter(t => nodeIds.has(t?.causeId) && t.causeId !== s.problem.primaryEffectId && !tested.has(t.causeId) && tested.add(t.causeId))
+    const tests = (Array.isArray(spec.tests) ? spec.tests : []).filter(t => nodeIds.has(t?.causeId) && !roots.has(t.causeId) && !tested.has(t.causeId) && tested.add(t.causeId))
       .map(t => ({causeId: t.causeId, marks: Object.fromEntries(Object.entries(t.marks || {}).filter(([k, v]) => rowIds.has(k) && v in SPEC_MARKS))}));
-    s.specification = {rows, tests};
-  } else s.specification = blankSpecification();
+    return {rows, tests};
+  };
+  s.specification = normalSpec(p.specification);
+  for (const x of s.moreProblems) x.specification = normalSpec(x.specification);
   const when = v => typeof v === 'string' && eventMinutes(v) !== null ? v : '';
   s.timelines = (Array.isArray(p.timelines) ? p.timelines : []).filter(t => t?.id).map(t => ({...t,
     effectId: nodeIds.has(t.effectId) ? t.effectId : s.problem.primaryEffectId,
@@ -3810,7 +3868,7 @@ function normalizeProject(p) {
       events: (Array.isArray(ph.events) ? ph.events : []).filter(ev => ev?.id).map(ev => ({text: '', ...ev,
         start: when(ev.start), end: when(ev.end), kind: ['action', 'condition'].includes(ev.kind) ? ev.kind : 'action', deviation: ev.deviation === true,
         evidenceIds: Array.isArray(ev.evidenceIds) ? ev.evidenceIds : [], nodeId: nodeIds.has(ev.nodeId) ? ev.nodeId : null}))}))}));
-  const cmp = p.comparison, eventIds = new Set(s.timelines.flatMap(t => t.phases.flatMap(ph => ph.events.map(ev => ev.id)))), specIds = new Set(s.specification.rows.map(r => r.id));
+  const cmp = p.comparison, eventIds = new Set(s.timelines.flatMap(t => t.phases.flatMap(ph => ph.events.map(ev => ev.id)))), specIds = new Set([s.specification, ...s.moreProblems.map(x => x.specification)].flatMap(sp => sp.rows.map(r => r.id)));
   s.comparison = {cases: [0, 1, 2].map(i => ({name: str(cmp?.cases?.[i]?.name), why: str(cmp?.cases?.[i]?.why)})),
     rows: (Array.isArray(cmp?.rows) ? cmp.rows : []).filter(r => r?.id).map(r => ({id: r.id,
       cat: COMPARE_CATEGORIES.includes(r.cat) ? r.cat : COMPARE_CATEGORIES.at(-1), factor: str(r.factor),
@@ -4008,7 +4066,7 @@ const formArea = (label, list, id, fieldPath, value, attrs = '') =>
 const pageHead = (title, lede, button = '') =>
   `<div class="page-head"><div><h1>${title}</h1><p class="lede">${lede}</p></div>${button}</div>`;
 const teamList = () => `<datalist id="teamNames">${state.meta.team.map(m => `<option value="${escapeHtml(m.name)}">`).join('')}</datalist>`;
-const nodeName = n => n.id === state.problem.primaryEffectId ? {kind: 'effect'} : n;
+const nodeName = n => isRoot(n.id) ? {kind: 'effect'} : n;
 const causeChip = (n, removeAct, ownerId) => `<span class="cause-chip">${swatch(nodeName(n))}<button class="link" data-act="goto-node" data-node="${n.id}" title="Show on the chart">${escapeHtml(shorten(n.title, 60))}</button>${removeAct
   ? `<button class="unlink" data-act="${removeAct}" data-id="${ownerId}" data-node="${n.id}" aria-label="Remove ${escapeHtml(n.title)}">×</button>` : ''}</span>`;
 const evidenceChip = (e, removeAct, ownerId) => `<span class="ev-chip" title="${escapeHtml(e.description)}"><span class="code">${escapeHtml(e.code)}</span>${removeAct
@@ -4027,6 +4085,8 @@ function setRecord(name) {
 }
 function showRecord(name, focusId) {
   linking = null; nodeDrag = null;
+  // A question of the Is / Is Not opens on its problem's specification.
+  if (name === 'spec' && focusId && specRootOfRow(focusId)) specRoot = specRootOfRow(focusId);
   setRecord(name);
   render();
   if (name === 'chart') { if (selected) scrollToNode(selected); return; }
@@ -4196,13 +4256,22 @@ let eventOn = null;          // the event being edited, lit in its figure
 
 // ---- Is / Is Not ----
 
-// The causes that can still be tested: on the chart, not the primary effect, not ruled out, not yet in the matrix.
-const specCandidates = () => state.nodes.filter(n => n.id !== state.problem.primaryEffectId && !specTest(n.id) && !isRuledOut(n) && reachable().has(n.id));
+// The causes that can still be tested: in the problem's tree, not its primary effect, not ruled out, not yet in the matrix.
+const specCandidates = () => {
+  const inTree = reachable(state.links, [specOn()]);
+  return state.nodes.filter(n => !isRoot(n.id) && !specTest(n.id) && !isRuledOut(n) && inTree.has(n.id));
+};
+
+// With more than one problem, each has its own Is / Is Not: the tabs pick one.
+const problemTabs = (act, on) => rootIds().length < 2 ? '' : `<div class="segmented problem-tabs" role="group" aria-label="Problem">${rootIds().map(id =>
+  `<button data-act="${act}" data-id="${id}" ${pressed(id === on)} title="${escapeHtml(byId(id).title)}">${problemName(id)}: ${escapeHtml(shorten(byId(id).title, 40))}</button>`).join('')}</div>`;
 
 function specPage() {
-  const sp = state.specification, facts = specFacts(), candidates = specCandidates();
+  const sp = curSpec(), facts = specFacts(), candidates = specCandidates();
   const tests = sp.tests.filter(t => byId(t.causeId));
   return `${pageHead('Is / Is Not', 'Specify the problem precisely before explaining it, after Kepner-Tregoe: for each question, what the problem <b>is</b>, and what it could be but <b>is not</b>. Then test each possible cause against those facts: the true cause explains why the problem is here and not there.')}
+    ${rootIds().length > 1 ? `<section class="card">${problemTabs('spec-problem', specOn())}
+      <p class="note">Each problem has its own specification and its own causes to test. This one: <b>${escapeHtml(byId(specOn()).title)}</b>.</p></section>` : ''}
     <section class="card">
       <h2>Specification</h2>
       <p class="note">For IS NOT, give the closest thing that could have the problem but does not: the other seal on the same pump, the spare pump, the same seal before the upset. Then note what is distinctive about the IS side, and what changed in or around it.
@@ -4262,9 +4331,11 @@ function comparePage() {
     if (!compareExplains(r)) return '';
     const n = compareNode(r), sr = r.specRowId && specRow(r.specRowId);
     return `${n ? `<button class="link" data-act="goto-node" data-node="${n.id}" title="Show it on the chart">On the chart</button>` : `<button class="button small" data-act="compare-to-chart" data-id="${r.id}" title="Add it to the chart as a possible cause, with its evidence">Add to chart</button>`}
-      ${sr ? `<button class="link" data-act="goto-record" data-v="spec" title="${escapeHtml(sr.question)}">In Is / Is Not, ${specLabel(sr)}</button>`
-        : `<select class="picker" data-act="compare-to-spec" data-id="${r.id}" aria-label="Send to a question of the Is / Is Not"><option value="">Send to Is / Is Not…</option>${state.specification.rows.map(q =>
-          `<option value="${q.id}">${specLabel(q)}: ${escapeHtml(shorten(q.question, 50))}</option>`).join('')}</select>`}`;
+      ${sr ? `<button class="link" data-act="goto-spec" data-id="${sr.id}" title="${escapeHtml(sr.question)}">In Is / Is Not, ${rootIds().length > 1 ? problemName(specRootOfRow(sr.id)) + ', ' : ''}${specLabel(sr)}</button>`
+        : `<select class="picker" data-act="compare-to-spec" data-id="${r.id}" aria-label="Send to a question of the Is / Is Not"><option value="">Send to Is / Is Not…</option>${rootIds().map(root => {
+          const options = specOf(root).rows.map(q => `<option value="${q.id}">${specLabel(q)}: ${escapeHtml(shorten(q.question, 50))}</option>`).join('');
+          return rootIds().length > 1 ? `<optgroup label="${escapeHtml(`${problemName(root)}: ${shorten(byId(root).title, 40)}`)}">${options}</optgroup>` : options;
+        }).join('')}</select>`}`;
   };
   const when = r => {
     const ev = compareEvent(r);
@@ -4410,15 +4481,23 @@ function refreshTimelineFigures() {
 }
 
 function problemPage() {
-  const p = state.problem, s = p.significance, effect = primaryEffect();
-  return `${pageHead('Problem definition', 'What happened, when, where, and why it matters. The “what” is the primary effect: the first box of the chart.')}
-    <section class="card">
+  const p = state.problem, s = p.significance, several = rootIds().length > 1;
+  // One card per problem: its primary effect, the first box of its tree, and its own when and where.
+  const statement = root => {
+    const effect = byId(root), first = root === p.primaryEffectId, list = first ? 'problem' : 'moreProblems', at = problemOf(root);
+    return `<section class="card">
+      ${several ? `<div class="section-head"><h2>${problemName(root)}</h2>${first ? '' : `<button class="button small danger" data-act="remove-problem" data-id="${root}">Remove this problem</button>`}</div>` : ''}
       ${formArea('What <span class="muted">the primary effect</span>', 'node', effect.id, 'title', effect.title, 'rows="2"')}
       <div class="form-grid">
-        ${formArea('When', 'problem', '', 'when', p.when, 'rows="2" placeholder="Date, time, and the circumstances"')}
-        ${formArea('Where', 'problem', '', 'where', p.where, 'rows="2" placeholder="Unit, equipment, and position"')}
+        ${formArea('When', list, first ? '' : root, 'when', at.when, 'rows="2" placeholder="Date, time, and the circumstances"')}
+        ${formArea('Where', list, first ? '' : root, 'where', at.where, 'rows="2" placeholder="Unit, equipment, and position"')}
       </div>
-    </section>
+    </section>`;
+  };
+  return `${pageHead('Problem definition', 'What happened, when, where, and why it matters. The “what” is the primary effect: the first box of the chart.',
+    '<button class="button" data-act="add-problem" title="A second problem in this investigation, for example another failure in the same sequence of events: its own statement, tree, and Is / Is Not">+ Add another problem</button>')}
+    ${several ? '<p class="note">Each problem has its own tree on the chart and its own Is / Is Not. The sequence of events, evidence, team, solutions, and actions are shared.</p>' : ''}
+    ${rootIds().map(statement).join('')}
     <section class="card">
       <h2>Significance</h2>
       <p class="note">Why this RCA is worth the effort: the consequences, in each area.</p>
@@ -4557,7 +4636,7 @@ function ruledOutPage() {
       }).join('') : empty(6, 'No causes ruled out yet.')}</tbody>
     </table></div>
     ${treeStyle() ? `<h2 class="page-sub">Ruled out on the cause tree</h2>
-    <p class="note">These stay on the tree, faded and struck through. Write how each was ruled out here or in its properties.</p>
+    <p class="note">These stay on the tree, greyed and marked ruled out. Write how each was ruled out here or in its properties.</p>
     <div class="table-wrap"><table class="log">
       <colgroup><col style="width:30%"><col style="width:40%"><col style="width:20%"><col style="width:80px"></colgroup>
       <thead><tr><th>Cause</th><th>Evidence or test</th><th>Evidence</th><th><span class="sr">Show</span></th></tr></thead>
@@ -4571,7 +4650,7 @@ function ruledOutPage() {
 }
 
 function solutionsPage() {
-  const causes = state.nodes.filter(n => n.id !== state.problem.primaryEffectId)
+  const causes = state.nodes.filter(n => !isRoot(n.id))
     .sort((a, b) => (b.controllable - a.controllable) || a.title.localeCompare(b.title));
   return `${pageHead('Solutions', 'Each solution attacks one or more causes, and is weighed against the four solution criteria. Controllable causes are the candidates.',
     '<button class="button primary" data-act="add-solution">+ Add solution</button>')}
@@ -4642,6 +4721,7 @@ function boundObject(el) {
   const {list, id} = el.dataset;
   if (list === 'meta') return state.meta;
   if (list === 'problem') return state.problem;
+  if (list === 'moreProblems') return state.moreProblems.find(p => p.effectId === id);
   if (list === 'equipment') return state.equipment;
   if (list === 'specRows') return specRow(id);
   if (list === 'cmpCases') return state.comparison.cases[+id];
@@ -4688,7 +4768,7 @@ $('records').addEventListener('change', e => {
     if (el.dataset.act === 'fish-add-evidence') fishSource(fishFind(el.dataset.id).cause).evidenceIds.push(value);
     if (el.dataset.act === 'fish-effect') state.fishbones.find(f => f.id === el.dataset.id).effectId = value;
     if (el.dataset.act === 'event-add-evidence') eventSource(eventFind(el.dataset.id).event).evidenceIds.push(value);
-    if (el.dataset.act === 'spec-add-test') state.specification.tests.push({causeId: value, marks: {}});
+    if (el.dataset.act === 'spec-add-test') curSpec().tests.push({causeId: value, marks: {}});
     if (el.dataset.act === 'timeline-effect') state.timelines.find(t => t.id === el.dataset.id).effectId = value;
     if (el.dataset.act === 'compare-add-evidence') compareRow(el.dataset.id).evidenceIds.push(value);
     if (el.dataset.act === 'compare-link-event') compareRow(el.dataset.id).eventId = value;
@@ -4724,6 +4804,23 @@ $('records').addEventListener('click', e => {
       showRecord('chart');
       return;
     case 'goto-record': showRecord(el.dataset.v); return;
+    case 'goto-spec': showRecord('spec', id); return;
+    case 'spec-problem': specRoot = id; render(); return;
+    case 'add-problem': {
+      const n = addTree();
+      render(); persist();
+      const input = document.querySelector(`#records [data-list="node"][data-id="${n.id}"]`);
+      input?.scrollIntoView({block: 'center'}); input?.focus(); input?.select();
+      setStatus(`Added ${problemName(n.id)}: state it, then build its tree on the chart`);
+      return;
+    }
+    case 'remove-problem': {
+      const ids = deletionSet(id), others = ids.length - 1;
+      if (!confirm(`Remove ${problemName(id)}, “${byId(id).title}”, with its Is / Is Not${others ? ` and the ${plural(others, 'cause')} only it has` : ''}?`)) return;
+      deleteNodes(ids);
+      setStatus('Problem removed');
+      break;
+    }
     case 'compare-start': {
       const added = compareFromEquipment();
       setStatus(added ? `Added ${plural(added, 'factor')} from the equipment record` : 'Started with one empty factor');
@@ -4743,14 +4840,14 @@ $('records').addEventListener('click', e => {
       showRecord('chart');
       return;
     case 'spec-add-row': {
-      const rows = state.specification.rows, row = blankSpecRow(el.dataset.dim);
+      const rows = curSpec().rows, row = blankSpecRow(el.dataset.dim);
       const last = rows.findLastIndex(r => r.dim === row.dim);
       rows.splice(last < 0 ? rows.length : last + 1, 0, row); focusId = row.id;
       break;
     }
     case 'spec-delete-row':
-      state.specification.rows = state.specification.rows.filter(r => r.id !== id);
-      for (const t of state.specification.tests) delete t.marks[id];
+      curSpec().rows = curSpec().rows.filter(r => r.id !== id);
+      for (const t of curSpec().tests) delete t.marks[id];
       break;
     case 'spec-mark': {
       const marks = specTest(id).marks, order = ['', ...Object.keys(SPEC_MARKS)], row = el.dataset.row;
@@ -4760,8 +4857,8 @@ $('records').addEventListener('click', e => {
       document.querySelector(`#records [data-act="spec-mark"][data-id="${id}"][data-row="${row}"]`)?.focus();
       return;
     }
-    case 'spec-remove-test': state.specification.tests = state.specification.tests.filter(t => t.causeId !== id); break;
-    case 'spec-add-all': for (const n of specCandidates()) state.specification.tests.push({causeId: n.id, marks: {}}); break;
+    case 'spec-remove-test': curSpec().tests = curSpec().tests.filter(t => t.causeId !== id); break;
+    case 'spec-add-all': for (const n of specCandidates()) curSpec().tests.push({causeId: n.id, marks: {}}); break;
     case 'add-chain': focusId = addChain().steps[0].id; break;
     case 'delete-chain': {
       const chain = state.fiveWhys.find(c => c.id === id);
@@ -5477,7 +5574,7 @@ function fullReport() {
     <dl class="r-grid r-team">${item('Lead', rLead())}${item('Team', m.team.filter(t => t.id !== m.leadId).map(t => `${t.name}${t.role ? ' (' + t.role + ')' : ''}`).join('\n'))}</dl>
     <section>
       <h2>Problem definition</h2>
-      <dl class="r-grid two">${item('What', primaryEffect()?.title)}${item('When', p.when)}${item('Where', p.where)}</dl>
+      ${problemStatements(item)}
       <h3>Significance</h3>
       <dl class="r-grid">${item('Safety', sig.safety)}${item('Environment', sig.environment)}${item('Production / cost', sig.productionCost)}${item('Reliability', sig.reliability)}</dl>
       ${equipmentFilled() ? `<h3>Equipment and duty</h3>${EQUIPMENT_SECTIONS.filter(s => s.fields.some(f => state.equipment[f[0]]?.trim())).map(s => `<h4>${s.title}</h4>
@@ -5486,7 +5583,7 @@ function fullReport() {
     <section class="r-page">
       <h2>${treeStyle() ? 'Cause tree' : 'Cause-and-effect chart'}</h2>
       <p class="r-legend">${treeStyle()
-        ? 'Read left to right: each effect, then its possible causes. Red: primary effect. Solid teal, with a bold link: confirmed. White, dashed, H: hypothesis, still to test. Grey, struck through, ✕: ruled out. E-codes: evidence. Orange badge: no evidence. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'
+        ? 'Read left to right: each effect, then its possible causes. Red: primary effect. Solid teal, with a bold link: confirmed. White, dashed, H: hypothesis, still to test. Grey, RULED OUT, ✕: ruled out. E-codes: evidence. Orange badge: no evidence. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'
         : 'Read left to right: each effect, then the causes that were all needed for it (AND). OR, dashed: alternatives, one of which was needed, still to settle. Red: primary effect. Dark: action. Light: condition. E-codes: evidence. ?: no evidence or unverified. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'}</p>
       ${chartFigures().join('')}
       ${issues.length ? `<h3>Open rule issues</h3><ul>${issues.map(i => `<li class="${i.level === 'error' ? 'r-issue-error' : ''}">${escapeHtml(issueTitle(i))}: ${escapeHtml(i.text)}</li>`).join('')}</ul>` : ''}
@@ -5507,14 +5604,18 @@ function fullReport() {
           ${table(['Category', 'Possible cause', 'Type', 'Evidence', 'Status'], rows, 'No possible causes recorded.')}`;
       }).join('')}
     </section>` : ''}
-    ${specFacts().length ? `<section class="r-page">
+    ${allSpecs().some(sp => specFacts(sp).length) ? `<section class="r-page">
       <h2>Is / Is Not</h2>
-      ${table(['Question', 'Is', 'Is not', 'Distinctive about the IS', 'Changed'], specFacts().map(r => `<tr><td><b>${specLabel(r)}</b> ${text(r.question)}</td>
+      ${rootIds().filter(root => specFacts(specOf(root)).length).map(root => {
+        const sp = specOf(root), facts = specFacts(sp), tests = sp.tests.filter(t => byId(t.causeId));
+        return `${rootIds().length > 1 ? `<h3>${problemName(root)}: ${escapeHtml(byId(root).title)}</h3>` : ''}
+      ${table(['Question', 'Is', 'Is not', 'Distinctive about the IS', 'Changed'], facts.map(r => `<tr><td><b>${specLabel(r)}</b> ${text(r.question)}</td>
         <td>${text(r.is)}</td><td>${text(r.isNot)}</td><td>${text(r.distinction)}</td><td>${text(r.change)}</td></tr>`), '')}
-      ${state.specification.tests.some(t => byId(t.causeId)) ? `<h3>Possible causes tested against the facts</h3>
-        ${table(['Cause', ...specFacts().map(specLabel), 'Result'], state.specification.tests.filter(t => byId(t.causeId)).map(t => `<tr><td>${text(byId(t.causeId).title)}</td>
-          ${specFacts().map(f => `<td class="r-mark">${SPEC_MARKS[t.marks[f.id]]?.mark || '·'}</td>`).join('')}<td>${specSummary(specResult(t))}</td></tr>`), '')}
-        <p class="r-legend">✓ explains why the problem is here and not there; ? only if an assumption holds; ✕ does not explain it.</p>` : ''}
+      ${tests.length ? `<h4>Possible causes tested against the facts</h4>
+        ${table(['Cause', ...facts.map(specLabel), 'Result'], tests.map(t => `<tr><td>${text(byId(t.causeId).title)}</td>
+          ${facts.map(f => `<td class="r-mark">${SPEC_MARKS[t.marks[f.id]]?.mark || '·'}</td>`).join('')}<td>${specSummary(specResult(t, sp))}</td></tr>`), '')}
+        <p class="r-legend">✓ explains why the problem is here and not there; ? only if an assumption holds; ✕ does not explain it.</p>` : ''}`;
+      }).join('')}
     </section>` : ''}
     ${compareDiffs().length ? `<section class="r-page">${compareReport('<h2>Failed vs good</h2>')}</section>` : ''}
     ${state.timelines.length ? `<section class="r-page">
@@ -5561,9 +5662,15 @@ function fullReport() {
     <p class="r-foot">Causeway · ${escapeHtml(rcaName())} · printed ${today()}</p>`;
 }
 
+// What, when, and where of each problem; headed by its name when there are several.
+const problemStatements = item => rootIds().map(root => {
+  const at = problemOf(root);
+  return `${rootIds().length > 1 ? `<h3>${problemName(root)}</h3>` : ''}<dl class="r-grid two">${item('What', byId(root).title)}${item('When', at.when)}${item('Where', at.where)}</dl>`;
+}).join('');
+
 // 8D: the same RCA in the eight disciplines a customer's 8D request asks for.
 function report8D() {
-  const m = state.meta, p = state.problem, e = state.equipment, facts = specFacts();
+  const m = state.meta, p = state.problem, e = state.equipment;
   // The short disciplines stay whole on a page; D2 and D4 may run over.
   const d = (n, title, body) => `<section class="r-d${[2, 4].includes(n) ? '' : ' r-keep'}"><h2><span class="r-dnum">D${n}</span>${title}</h2>${body}</section>`;
   const roots = rootCauses(), groups = [...Object.entries(CAUSE_TYPES), ['', {name: 'Root causes, type not set'}]]
@@ -5575,12 +5682,13 @@ function report8D() {
   return `
     ${reportCover('8D report')}
     ${d(1, 'Team', rTable(['Name', 'Role', ''], m.team.map(t => `<tr><td>${rText(t.name)}</td><td>${rText(t.role)}</td><td>${t.id === m.leadId ? '<b>Lead</b>' : ''}</td></tr>`), 'No team recorded.'))}
-    ${d(2, 'Problem description', `<dl class="r-grid two">${rItem('What', primaryEffect()?.title)}${rItem('When', p.when)}${rItem('Where', p.where)}${rItem('Significance',
+    ${d(2, 'Problem description', `${problemStatements(rItem)}<dl class="r-grid two">${rItem('Significance',
       Object.entries({Safety: p.significance.safety, Environment: p.significance.environment, 'Production / cost': p.significance.productionCost, Reliability: p.significance.reliability})
         .filter(([, v]) => v.trim()).map(([k, v]) => `${k}: ${v}`).join('\n'))}</dl>
       ${keyData.length ? `<dl class="r-grid">${keyData.map(([k, v]) => rItem(k, v)).join('')}</dl>` : ''}
-      ${facts.length ? `<h3>Is / Is Not</h3>${rTable(['Question', 'Is', 'Is not', 'Distinctive', 'Changed'], facts.map(r => `<tr><td><b>${specLabel(r)}</b> ${rText(r.question)}</td>
-        <td>${rText(r.is)}</td><td>${rText(r.isNot)}</td><td>${rText(r.distinction)}</td><td>${rText(r.change)}</td></tr>`), '')}` : ''}`)}
+      ${rootIds().filter(root => specFacts(specOf(root)).length).map(root => `<h3>Is / Is Not${rootIds().length > 1 ? `, ${problemName(root).toLowerCase()}` : ''}</h3>${rTable(['Question', 'Is', 'Is not', 'Distinctive', 'Changed'],
+        specFacts(specOf(root)).map(r => `<tr><td><b>${specLabel(r)}</b> ${rText(r.question)}</td>
+        <td>${rText(r.is)}</td><td>${rText(r.isNot)}</td><td>${rText(r.distinction)}</td><td>${rText(r.change)}</td></tr>`), '')}`).join('')}`)}
     ${d(3, 'Containment actions', rTable(ACTION_HEADS, actionRows(actionsOfKind('containment')), 'No containment actions recorded.'))}
     ${d(4, 'Root causes', `${groups.length ? groups.map(([t, list]) => `<h3>${t.name}${t.about ? ` <span class="r-sub">${t.about.toLowerCase()}</span>` : ''}</h3>
         ${rTable(['Root cause', 'How it was verified', 'Evidence', 'Chain to the problem'], list.map(n => `<tr><td><b>${escapeHtml(n.title)}</b>${orNote(n) ? `<small class="r-tags">${escapeHtml(orNote(n))}</small>` : ''}</td><td>${rText(n.test)}</td>
@@ -5618,7 +5726,8 @@ function reportSummary() {
     </header>
     <div class="r-summary">
       <div class="r-block"><h3>The problem</h3>
-      <dl class="r-list">${key.map(([k, v]) => rItem(k, v)).join('')}${impact.map(([k, v]) => rItem(k, v)).join('')}</dl></div>
+      <dl class="r-list">${key.map(([k, v]) => rItem(k, v)).join('')}${rootIds().slice(1).map(root => rItem(problemName(root),
+        [byId(root).title, problemOf(root).when, problemOf(root).where].map(x => x.trim()).filter(Boolean).join('\n'))).join('')}${impact.map(([k, v]) => rItem(k, v)).join('')}</dl></div>
       <div class="r-block"><h3>Root causes</h3>
       ${roots.length ? `<ul class="r-roots">${roots.map(n => `<li><b>${escapeHtml(n.title)}</b>${n.causeType ? ` <span class="r-tagline">${CAUSE_TYPES[n.causeType].name}</span>` : ''}${orNote(n) ? `<div class="r-chain">${escapeHtml(orNote(n))}</div>` : ''}
         ${chain(n).length ? `<div class="r-chain">→ ${chain(n).join(' → ')}</div>` : ''}</li>`).join('')}</ul>` : '<p class="r-none">Not identified yet.</p>'}</div>
@@ -6265,7 +6374,7 @@ const GUIDES = {
     tips: [
       'A cause ruled out with no reason is flagged: someone will ask, and the answer should be here.',
       '“Unlikely” is not ruled out. If it has not been tested, it is still a hypothesis.',
-      'In a cause tree, ruled-out causes stay on the tree, struck through, and are listed here too.',
+      'In a cause tree, ruled-out causes stay on the tree, greyed and marked ruled out, and are listed here too.',
     ],
   },
   solutions: {

@@ -21,7 +21,7 @@ const formArea = (label, list, id, fieldPath, value, attrs = '') =>
 const pageHead = (title, lede, button = '') =>
   `<div class="page-head"><div><h1>${title}</h1><p class="lede">${lede}</p></div>${button}</div>`;
 const teamList = () => `<datalist id="teamNames">${state.meta.team.map(m => `<option value="${escapeHtml(m.name)}">`).join('')}</datalist>`;
-const nodeName = n => n.id === state.problem.primaryEffectId ? {kind: 'effect'} : n;
+const nodeName = n => isRoot(n.id) ? {kind: 'effect'} : n;
 const causeChip = (n, removeAct, ownerId) => `<span class="cause-chip">${swatch(nodeName(n))}<button class="link" data-act="goto-node" data-node="${n.id}" title="Show on the chart">${escapeHtml(shorten(n.title, 60))}</button>${removeAct
   ? `<button class="unlink" data-act="${removeAct}" data-id="${ownerId}" data-node="${n.id}" aria-label="Remove ${escapeHtml(n.title)}">×</button>` : ''}</span>`;
 const evidenceChip = (e, removeAct, ownerId) => `<span class="ev-chip" title="${escapeHtml(e.description)}"><span class="code">${escapeHtml(e.code)}</span>${removeAct
@@ -40,6 +40,8 @@ function setRecord(name) {
 }
 function showRecord(name, focusId) {
   linking = null; nodeDrag = null;
+  // A question of the Is / Is Not opens on its problem's specification.
+  if (name === 'spec' && focusId && specRootOfRow(focusId)) specRoot = specRootOfRow(focusId);
   setRecord(name);
   render();
   if (name === 'chart') { if (selected) scrollToNode(selected); return; }
@@ -209,13 +211,22 @@ let eventOn = null;          // the event being edited, lit in its figure
 
 // ---- Is / Is Not ----
 
-// The causes that can still be tested: on the chart, not the primary effect, not ruled out, not yet in the matrix.
-const specCandidates = () => state.nodes.filter(n => n.id !== state.problem.primaryEffectId && !specTest(n.id) && !isRuledOut(n) && reachable().has(n.id));
+// The causes that can still be tested: in the problem's tree, not its primary effect, not ruled out, not yet in the matrix.
+const specCandidates = () => {
+  const inTree = reachable(state.links, [specOn()]);
+  return state.nodes.filter(n => !isRoot(n.id) && !specTest(n.id) && !isRuledOut(n) && inTree.has(n.id));
+};
+
+// With more than one problem, each has its own Is / Is Not: the tabs pick one.
+const problemTabs = (act, on) => rootIds().length < 2 ? '' : `<div class="segmented problem-tabs" role="group" aria-label="Problem">${rootIds().map(id =>
+  `<button data-act="${act}" data-id="${id}" ${pressed(id === on)} title="${escapeHtml(byId(id).title)}">${problemName(id)}: ${escapeHtml(shorten(byId(id).title, 40))}</button>`).join('')}</div>`;
 
 function specPage() {
-  const sp = state.specification, facts = specFacts(), candidates = specCandidates();
+  const sp = curSpec(), facts = specFacts(), candidates = specCandidates();
   const tests = sp.tests.filter(t => byId(t.causeId));
   return `${pageHead('Is / Is Not', 'Specify the problem precisely before explaining it, after Kepner-Tregoe: for each question, what the problem <b>is</b>, and what it could be but <b>is not</b>. Then test each possible cause against those facts: the true cause explains why the problem is here and not there.')}
+    ${rootIds().length > 1 ? `<section class="card">${problemTabs('spec-problem', specOn())}
+      <p class="note">Each problem has its own specification and its own causes to test. This one: <b>${escapeHtml(byId(specOn()).title)}</b>.</p></section>` : ''}
     <section class="card">
       <h2>Specification</h2>
       <p class="note">For IS NOT, give the closest thing that could have the problem but does not: the other seal on the same pump, the spare pump, the same seal before the upset. Then note what is distinctive about the IS side, and what changed in or around it.
@@ -275,9 +286,11 @@ function comparePage() {
     if (!compareExplains(r)) return '';
     const n = compareNode(r), sr = r.specRowId && specRow(r.specRowId);
     return `${n ? `<button class="link" data-act="goto-node" data-node="${n.id}" title="Show it on the chart">On the chart</button>` : `<button class="button small" data-act="compare-to-chart" data-id="${r.id}" title="Add it to the chart as a possible cause, with its evidence">Add to chart</button>`}
-      ${sr ? `<button class="link" data-act="goto-record" data-v="spec" title="${escapeHtml(sr.question)}">In Is / Is Not, ${specLabel(sr)}</button>`
-        : `<select class="picker" data-act="compare-to-spec" data-id="${r.id}" aria-label="Send to a question of the Is / Is Not"><option value="">Send to Is / Is Not…</option>${state.specification.rows.map(q =>
-          `<option value="${q.id}">${specLabel(q)}: ${escapeHtml(shorten(q.question, 50))}</option>`).join('')}</select>`}`;
+      ${sr ? `<button class="link" data-act="goto-spec" data-id="${sr.id}" title="${escapeHtml(sr.question)}">In Is / Is Not, ${rootIds().length > 1 ? problemName(specRootOfRow(sr.id)) + ', ' : ''}${specLabel(sr)}</button>`
+        : `<select class="picker" data-act="compare-to-spec" data-id="${r.id}" aria-label="Send to a question of the Is / Is Not"><option value="">Send to Is / Is Not…</option>${rootIds().map(root => {
+          const options = specOf(root).rows.map(q => `<option value="${q.id}">${specLabel(q)}: ${escapeHtml(shorten(q.question, 50))}</option>`).join('');
+          return rootIds().length > 1 ? `<optgroup label="${escapeHtml(`${problemName(root)}: ${shorten(byId(root).title, 40)}`)}">${options}</optgroup>` : options;
+        }).join('')}</select>`}`;
   };
   const when = r => {
     const ev = compareEvent(r);
@@ -423,15 +436,23 @@ function refreshTimelineFigures() {
 }
 
 function problemPage() {
-  const p = state.problem, s = p.significance, effect = primaryEffect();
-  return `${pageHead('Problem definition', 'What happened, when, where, and why it matters. The “what” is the primary effect: the first box of the chart.')}
-    <section class="card">
+  const p = state.problem, s = p.significance, several = rootIds().length > 1;
+  // One card per problem: its primary effect, the first box of its tree, and its own when and where.
+  const statement = root => {
+    const effect = byId(root), first = root === p.primaryEffectId, list = first ? 'problem' : 'moreProblems', at = problemOf(root);
+    return `<section class="card">
+      ${several ? `<div class="section-head"><h2>${problemName(root)}</h2>${first ? '' : `<button class="button small danger" data-act="remove-problem" data-id="${root}">Remove this problem</button>`}</div>` : ''}
       ${formArea('What <span class="muted">the primary effect</span>', 'node', effect.id, 'title', effect.title, 'rows="2"')}
       <div class="form-grid">
-        ${formArea('When', 'problem', '', 'when', p.when, 'rows="2" placeholder="Date, time, and the circumstances"')}
-        ${formArea('Where', 'problem', '', 'where', p.where, 'rows="2" placeholder="Unit, equipment, and position"')}
+        ${formArea('When', list, first ? '' : root, 'when', at.when, 'rows="2" placeholder="Date, time, and the circumstances"')}
+        ${formArea('Where', list, first ? '' : root, 'where', at.where, 'rows="2" placeholder="Unit, equipment, and position"')}
       </div>
-    </section>
+    </section>`;
+  };
+  return `${pageHead('Problem definition', 'What happened, when, where, and why it matters. The “what” is the primary effect: the first box of the chart.',
+    '<button class="button" data-act="add-problem" title="A second problem in this investigation, for example another failure in the same sequence of events: its own statement, tree, and Is / Is Not">+ Add another problem</button>')}
+    ${several ? '<p class="note">Each problem has its own tree on the chart and its own Is / Is Not. The sequence of events, evidence, team, solutions, and actions are shared.</p>' : ''}
+    ${rootIds().map(statement).join('')}
     <section class="card">
       <h2>Significance</h2>
       <p class="note">Why this RCA is worth the effort: the consequences, in each area.</p>
@@ -570,7 +591,7 @@ function ruledOutPage() {
       }).join('') : empty(6, 'No causes ruled out yet.')}</tbody>
     </table></div>
     ${treeStyle() ? `<h2 class="page-sub">Ruled out on the cause tree</h2>
-    <p class="note">These stay on the tree, faded and struck through. Write how each was ruled out here or in its properties.</p>
+    <p class="note">These stay on the tree, greyed and marked ruled out. Write how each was ruled out here or in its properties.</p>
     <div class="table-wrap"><table class="log">
       <colgroup><col style="width:30%"><col style="width:40%"><col style="width:20%"><col style="width:80px"></colgroup>
       <thead><tr><th>Cause</th><th>Evidence or test</th><th>Evidence</th><th><span class="sr">Show</span></th></tr></thead>
@@ -584,7 +605,7 @@ function ruledOutPage() {
 }
 
 function solutionsPage() {
-  const causes = state.nodes.filter(n => n.id !== state.problem.primaryEffectId)
+  const causes = state.nodes.filter(n => !isRoot(n.id))
     .sort((a, b) => (b.controllable - a.controllable) || a.title.localeCompare(b.title));
   return `${pageHead('Solutions', 'Each solution attacks one or more causes, and is weighed against the four solution criteria. Controllable causes are the candidates.',
     '<button class="button primary" data-act="add-solution">+ Add solution</button>')}
@@ -655,6 +676,7 @@ function boundObject(el) {
   const {list, id} = el.dataset;
   if (list === 'meta') return state.meta;
   if (list === 'problem') return state.problem;
+  if (list === 'moreProblems') return state.moreProblems.find(p => p.effectId === id);
   if (list === 'equipment') return state.equipment;
   if (list === 'specRows') return specRow(id);
   if (list === 'cmpCases') return state.comparison.cases[+id];
@@ -701,7 +723,7 @@ $('records').addEventListener('change', e => {
     if (el.dataset.act === 'fish-add-evidence') fishSource(fishFind(el.dataset.id).cause).evidenceIds.push(value);
     if (el.dataset.act === 'fish-effect') state.fishbones.find(f => f.id === el.dataset.id).effectId = value;
     if (el.dataset.act === 'event-add-evidence') eventSource(eventFind(el.dataset.id).event).evidenceIds.push(value);
-    if (el.dataset.act === 'spec-add-test') state.specification.tests.push({causeId: value, marks: {}});
+    if (el.dataset.act === 'spec-add-test') curSpec().tests.push({causeId: value, marks: {}});
     if (el.dataset.act === 'timeline-effect') state.timelines.find(t => t.id === el.dataset.id).effectId = value;
     if (el.dataset.act === 'compare-add-evidence') compareRow(el.dataset.id).evidenceIds.push(value);
     if (el.dataset.act === 'compare-link-event') compareRow(el.dataset.id).eventId = value;
@@ -737,6 +759,23 @@ $('records').addEventListener('click', e => {
       showRecord('chart');
       return;
     case 'goto-record': showRecord(el.dataset.v); return;
+    case 'goto-spec': showRecord('spec', id); return;
+    case 'spec-problem': specRoot = id; render(); return;
+    case 'add-problem': {
+      const n = addTree();
+      render(); persist();
+      const input = document.querySelector(`#records [data-list="node"][data-id="${n.id}"]`);
+      input?.scrollIntoView({block: 'center'}); input?.focus(); input?.select();
+      setStatus(`Added ${problemName(n.id)}: state it, then build its tree on the chart`);
+      return;
+    }
+    case 'remove-problem': {
+      const ids = deletionSet(id), others = ids.length - 1;
+      if (!confirm(`Remove ${problemName(id)}, “${byId(id).title}”, with its Is / Is Not${others ? ` and the ${plural(others, 'cause')} only it has` : ''}?`)) return;
+      deleteNodes(ids);
+      setStatus('Problem removed');
+      break;
+    }
     case 'compare-start': {
       const added = compareFromEquipment();
       setStatus(added ? `Added ${plural(added, 'factor')} from the equipment record` : 'Started with one empty factor');
@@ -756,14 +795,14 @@ $('records').addEventListener('click', e => {
       showRecord('chart');
       return;
     case 'spec-add-row': {
-      const rows = state.specification.rows, row = blankSpecRow(el.dataset.dim);
+      const rows = curSpec().rows, row = blankSpecRow(el.dataset.dim);
       const last = rows.findLastIndex(r => r.dim === row.dim);
       rows.splice(last < 0 ? rows.length : last + 1, 0, row); focusId = row.id;
       break;
     }
     case 'spec-delete-row':
-      state.specification.rows = state.specification.rows.filter(r => r.id !== id);
-      for (const t of state.specification.tests) delete t.marks[id];
+      curSpec().rows = curSpec().rows.filter(r => r.id !== id);
+      for (const t of curSpec().tests) delete t.marks[id];
       break;
     case 'spec-mark': {
       const marks = specTest(id).marks, order = ['', ...Object.keys(SPEC_MARKS)], row = el.dataset.row;
@@ -773,8 +812,8 @@ $('records').addEventListener('click', e => {
       document.querySelector(`#records [data-act="spec-mark"][data-id="${id}"][data-row="${row}"]`)?.focus();
       return;
     }
-    case 'spec-remove-test': state.specification.tests = state.specification.tests.filter(t => t.causeId !== id); break;
-    case 'spec-add-all': for (const n of specCandidates()) state.specification.tests.push({causeId: n.id, marks: {}}); break;
+    case 'spec-remove-test': curSpec().tests = curSpec().tests.filter(t => t.causeId !== id); break;
+    case 'spec-add-all': for (const n of specCandidates()) curSpec().tests.push({causeId: n.id, marks: {}}); break;
     case 'add-chain': focusId = addChain().steps[0].id; break;
     case 'delete-chain': {
       const chain = state.fiveWhys.find(c => c.id === id);

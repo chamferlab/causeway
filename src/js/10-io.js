@@ -49,6 +49,12 @@ function normalizeProject(p) {
     offsetY: Number.isFinite(n.offsetY) ? n.offsetY : 0, causeType: n.causeType in CAUSE_TYPES ? n.causeType : '', summary: n.summary === true,
     evidenceIds: Array.isArray(n.evidenceIds) ? n.evidenceIds : []}));
   if (!s.nodes.some(n => n.id === s.problem.primaryEffectId)) throw Error('The primary effect is missing.');
+  // Further problems: each with a primary effect that is on the chart, is no cause, and is not taken.
+  const causeIds = new Set(s.links.map(l => l?.causeId)), taken = new Set([s.problem.primaryEffectId]);
+  s.moreProblems = (Array.isArray(p.moreProblems) ? p.moreProblems : []).filter(x => typeof x?.effectId === 'string' && !causeIds.has(x.effectId)
+    && !taken.has(x.effectId) && taken.add(x.effectId) && s.nodes.some(n => n.id === x.effectId))
+    .map(x => ({effectId: x.effectId, when: typeof x.when === 'string' ? x.when : '', where: typeof x.where === 'string' ? x.where : '', specification: x.specification}));
+  delete s.problem.moreEffectIds;
   s.meta.team = Array.isArray(s.meta.team) ? s.meta.team.filter(m => m?.id) : [];
   s.meta.status = p.meta?.status in RCA_STATUS ? p.meta.status : 'open';
   for (const k of ['customerRef', 'revision']) if (typeof s.meta[k] !== 'string') s.meta[k] = '';
@@ -75,15 +81,18 @@ function normalizeProject(p) {
         ruledOutId: !nodeIds.has(c.nodeId) && ruledIds.has(c.ruledOutId) ? c.ruledOutId : null,
         parentId: top.has(c.parentId) ? c.parentId : null}))};
     })}));
-  const spec = p.specification, str = v => typeof v === 'string' ? v : '';
-  if (Array.isArray(spec?.rows)) {
+  const str = v => typeof v === 'string' ? v : '', roots = new Set([s.problem.primaryEffectId, ...s.moreProblems.map(x => x.effectId)]);
+  const normalSpec = spec => {
+    if (!Array.isArray(spec?.rows)) return blankSpecification();
     const rows = spec.rows.filter(r => r?.id).map(r => ({id: r.id, dim: r.dim in SPEC_DIMS ? r.dim : 'what', question: str(r.question), is: str(r.is), isNot: str(r.isNot),
       distinction: str(r.distinction), change: str(r.change)}));
     const rowIds = new Set(rows.map(r => r.id)), tested = new Set();
-    const tests = (Array.isArray(spec.tests) ? spec.tests : []).filter(t => nodeIds.has(t?.causeId) && t.causeId !== s.problem.primaryEffectId && !tested.has(t.causeId) && tested.add(t.causeId))
+    const tests = (Array.isArray(spec.tests) ? spec.tests : []).filter(t => nodeIds.has(t?.causeId) && !roots.has(t.causeId) && !tested.has(t.causeId) && tested.add(t.causeId))
       .map(t => ({causeId: t.causeId, marks: Object.fromEntries(Object.entries(t.marks || {}).filter(([k, v]) => rowIds.has(k) && v in SPEC_MARKS))}));
-    s.specification = {rows, tests};
-  } else s.specification = blankSpecification();
+    return {rows, tests};
+  };
+  s.specification = normalSpec(p.specification);
+  for (const x of s.moreProblems) x.specification = normalSpec(x.specification);
   const when = v => typeof v === 'string' && eventMinutes(v) !== null ? v : '';
   s.timelines = (Array.isArray(p.timelines) ? p.timelines : []).filter(t => t?.id).map(t => ({...t,
     effectId: nodeIds.has(t.effectId) ? t.effectId : s.problem.primaryEffectId,
@@ -91,7 +100,7 @@ function normalizeProject(p) {
       events: (Array.isArray(ph.events) ? ph.events : []).filter(ev => ev?.id).map(ev => ({text: '', ...ev,
         start: when(ev.start), end: when(ev.end), kind: ['action', 'condition'].includes(ev.kind) ? ev.kind : 'action', deviation: ev.deviation === true,
         evidenceIds: Array.isArray(ev.evidenceIds) ? ev.evidenceIds : [], nodeId: nodeIds.has(ev.nodeId) ? ev.nodeId : null}))}))}));
-  const cmp = p.comparison, eventIds = new Set(s.timelines.flatMap(t => t.phases.flatMap(ph => ph.events.map(ev => ev.id)))), specIds = new Set(s.specification.rows.map(r => r.id));
+  const cmp = p.comparison, eventIds = new Set(s.timelines.flatMap(t => t.phases.flatMap(ph => ph.events.map(ev => ev.id)))), specIds = new Set([s.specification, ...s.moreProblems.map(x => x.specification)].flatMap(sp => sp.rows.map(r => r.id)));
   s.comparison = {cases: [0, 1, 2].map(i => ({name: str(cmp?.cases?.[i]?.name), why: str(cmp?.cases?.[i]?.why)})),
     rows: (Array.isArray(cmp?.rows) ? cmp.rows : []).filter(r => r?.id).map(r => ({id: r.id,
       cat: COMPARE_CATEGORIES.includes(r.cat) ? r.cat : COMPARE_CATEGORIES.at(-1), factor: str(r.factor),

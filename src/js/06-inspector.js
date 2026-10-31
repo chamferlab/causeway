@@ -56,10 +56,12 @@ function renderRcaProperties(box) {
     <div class="panel-title">RCA</div>
     ${field('RCA number', 'rcaNumber', state.meta.rcaNumber, 'placeholder="e.g. RCA-2026-014"')}
     ${field('Equipment / tag', 'equipmentTag', state.meta.equipmentTag, 'placeholder="e.g. P-101A"')}
-    ${area('Primary effect', 'primaryTitle', primaryEffect()?.title || '', 'rows="2" style="min-height:44px"')}
+    ${area(state.moreProblems.length ? 'Primary effect, problem 1' : 'Primary effect', 'primaryTitle', primaryEffect()?.title || '', 'rows="2" style="min-height:44px"')}
+    ${rootIds().slice(1).map(id => `<label class="field">Primary effect, ${problemName(id).toLowerCase()}<textarea data-root="${id}" rows="2" style="min-height:44px">${escapeHtml(byId(id).title)}</textarea></label>`).join('')}
+    <button class="button block" id="inspAddTree" title="A second problem in this investigation: its own primary effect and tree, problem statement, and Is / Is Not">+ Add another problem</button>
     <div class="field">Chart style</div>
     ${styleCards()}
-    <p class="note">${state.nodes.length - 1} causes · ${state.evidence.length} evidence items · ${issues.filter(i => i.level === 'error').length} rule errors</p>
+    <p class="note">${state.nodes.length - rootIds().length} causes · ${state.evidence.length} evidence items · ${issues.filter(i => i.level === 'error').length} rule errors</p>
     ${collapsed.size ? `<button class="button block" id="expandAll">Expand all branches (${collapsed.size} collapsed)</button>` : ''}
     ${shiftedNodes().length ? `<button class="button block" id="resetShifts" style="margin-top:8px" title="Put the nodes moved up or down by hand back where the layout places them">Put back ${plural(shiftedNodes().length, 'node')} moved by hand</button>` : ''}
     <div class="section">
@@ -112,10 +114,12 @@ function renderRcaProperties(box) {
   $('rcaNumber').oninput = e => { state.meta.rcaNumber = e.target.value; renderTitle(); persist('rcaNumber'); };
   $('equipmentTag').oninput = e => { state.meta.equipmentTag = e.target.value; renderTitle(); persist('equipmentTag'); };
   $('primaryTitle').oninput = e => { primaryEffect().title = e.target.value; refreshChart(); persist('title:' + state.problem.primaryEffectId); };
+  box.querySelectorAll('[data-root]').forEach(t => t.oninput = () => { byId(t.dataset.root).title = t.value; refreshChart(); persist('title:' + t.dataset.root); });
+  $('inspAddTree').onclick = addTreeAndSelect;
 }
 
 function renderNodeProperties(box, n) {
-  const isPrimary = n.id === state.problem.primaryEffectId;
+  const isPrimary = isRoot(n.id);
   const causes = causesOf(n.id), effects = effectsOf(n.id);
   const issues = ruleIssues().filter(i => i.nodeId === n.id);
   const evidence = n.evidenceIds.map(evidenceById).filter(Boolean);
@@ -183,7 +187,7 @@ function renderNodeProperties(box, n) {
     </div>
     ${isPrimary ? '' : `<div class="section">
       <div class="panel-title">Supports</div>
-      <ul class="cause-list">${effects.map(e => `<li class="with-action"><button data-goto="${e.id}">${swatch(e.id === state.problem.primaryEffectId ? {kind: 'effect'} : e)}${escapeHtml(e.title)}</button>${effects.length > 1
+      <ul class="cause-list">${effects.map(e => `<li class="with-action"><button data-goto="${e.id}">${swatch(isRoot(e.id) ? {kind: 'effect'} : e)}${escapeHtml(e.title)}</button>${effects.length > 1
         ? `<button class="unlink" data-unlink-effect="${e.id}" title="Stop this being a cause of “${escapeHtml(e.title)}”" aria-label="Unlink from ${escapeHtml(e.title)}">×</button>` : ''}</li>`).join('')}</ul>
       ${effects.length > 1 ? `<p class="note">A shared cause: it ${tree ? 'may explain' : 'is needed for'} each of these effects.</p>` : ''}
       <button class="button block" id="inspMove" style="margin-top:8px" title="Move under another effect (Alt+M), or drag the node onto it">Move to another effect</button>

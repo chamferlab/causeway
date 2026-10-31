@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.23 — 2026-10-31
+
+More than one problem in one investigation, and readable ruled-out causes.
+
+- **+ Problem** (edit bar, RCA properties, or Problem definition) adds a further problem to the investigation, for when two failures share one sequence of events. Each problem has its own primary effect and tree, drawn below the first; its own What, When, and Where; and its own Is / Is Not, picked with tabs, testing the causes of its own tree. The timeline, evidence, team, solutions, and actions stay shared. Reports (full, 8D, summary, and so the Word and PowerPoint exports) give each problem its statement and Is / Is Not. A further problem can be removed, with its tree; a primary effect cannot be made a cause. Files keep them in `moreProblems`; older files open unchanged.
+- A ruled-out cause in a cause tree is no longer struck through: it is grey, says **RULED OUT** on its top line, keeps its ✕ badge, and its link is dashed.
+
 ## v1.22 — 2026-10-28
 
 Host it for colleagues.

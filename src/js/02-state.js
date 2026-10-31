@@ -41,7 +41,7 @@ function blankState(style = 'apollo') {
     meta: {rcaNumber: '', equipmentTag: '', sealType: '', style, leadId: '', team: [], dates: {opened: today(), eventDate: '', closed: ''},
       status: 'open', customerRef: '', revision: '', signoff: blankSignoff()},
     problem: {primaryEffectId: effect.id, when: '', where: '', readAcross: '', significance: {safety: '', environment: '', productionCost: '', reliability: ''}},
-    equipment: {}, nodes: [effect], links: [], evidence: [], ruledOut: [], solutions: [], actions: [], fiveWhys: [], fishbones: [], timelines: [], specification: blankSpecification(), comparison: blankComparison(),
+    equipment: {}, nodes: [effect], links: [], evidence: [], ruledOut: [], solutions: [], actions: [], fiveWhys: [], fishbones: [], timelines: [], specification: blankSpecification(), moreProblems: [], comparison: blankComparison(),
     counters: {evidence: 1},
   };
 }
@@ -62,6 +62,21 @@ let appModule = 'rca';         // the module shown: 'rca' or 'dfmea' (see 20-dfm
 
 const byId = id => state.nodes.find(n => n.id === id);
 const primaryEffect = () => byId(state.problem.primaryEffectId);
+// One investigation can address more than one problem, for example two failures in one sequence of
+// events. The first is state.problem with state.specification; each further one (state.moreProblems)
+// has its own primary effect, and so its own tree, drawn below the others, its own when and where, and
+// its own Is / Is Not. Everything else (timeline, evidence, team, solutions, actions) is shared.
+const blankProblem = effectId => ({effectId, when: '', where: '', specification: blankSpecification()});
+const rootIds = () => [state.problem.primaryEffectId, ...state.moreProblems.map(p => p.effectId)].filter(byId);
+const isRoot = id => id === state.problem.primaryEffectId || state.moreProblems.some(p => p.effectId === id);
+const problemOf = id => id === state.problem.primaryEffectId ? state.problem : state.moreProblems.find(p => p.effectId === id);
+const specOf = id => id === state.problem.primaryEffectId ? state.specification : state.moreProblems.find(p => p.effectId === id)?.specification;
+const allSpecs = () => rootIds().map(specOf);
+// "Problem 2" and so on; the first is just "the problem" while it is the only one.
+const problemName = id => `Problem ${rootIds().indexOf(id) + 1}`;
+let specRoot = null;           // the problem whose Is / Is Not the page shows; the first when unset
+const specOn = () => rootIds().includes(specRoot) ? specRoot : state.problem.primaryEffectId;
+const curSpec = () => specOf(specOn());
 const evidenceById = id => state.evidence.find(e => e.id === id);
 const treeStyle = () => state.meta.style === 'tree';
 

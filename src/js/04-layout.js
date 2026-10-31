@@ -44,9 +44,9 @@ function nodeFoot(n, hidden) {
 const hasFoot = f => f.codes.length || f.controllable || f.stop || f.hidden;
 
 // In a cause tree a cause has no kind label: its status badge in the corner says it. The label line
-// stays for its root cause type, when it has one.
+// stays for its root cause type, when it has one, and says RULED OUT on a ruled-out cause.
 const statusBadge = n => treeStyle() && isCause(n);
-const kindLine = n => statusBadge(n) && !n.causeType ? 0 : KIND_LINE;
+const kindLine = n => statusBadge(n) && !n.causeType && n.status !== 'ruled-out' ? 0 : KIND_LINE;
 
 function nodeSize(n, hidden) {
   const lines = wrapText(n.title.trim() || 'Untitled', NODE_W - 2 * NODE_PAD_X - (statusBadge(n) ? BADGE_ROOM : 0), TITLE_SIZE, 600);
@@ -56,10 +56,9 @@ function nodeSize(n, hidden) {
 }
 
 function computeLayout() {
-  const primaryId = state.problem.primaryEffectId;
-  // Roots: the primary effect, then any node no effect links to (only in hand-edited files).
-  const linked = new Set(state.links.map(l => l.causeId));
-  const roots = [primaryId, ...state.nodes.filter(n => n.id !== primaryId && !linked.has(n.id)).map(n => n.id)].filter(byId);
+  // Roots: the primary effects, one tree each, then any node no effect links to (only in hand-edited files).
+  const linked = new Set(state.links.map(l => l.causeId)), trees = rootIds();
+  const roots = [...trees, ...state.nodes.filter(n => !isRoot(n.id) && !linked.has(n.id)).map(n => n.id)];
 
   // Visible nodes: everything reached without passing through a collapsed node.
   const visible = new Set(), stack = [...roots];

@@ -23,7 +23,7 @@ function reaches(from, to) {
 // Why `causeId` cannot become a cause of `effectId`, or null when it can.
 function linkProblem(effectId, causeId) {
   if (effectId === causeId) return 'A cause cannot cause itself.';
-  if (causeId === state.problem.primaryEffectId) return 'The primary effect cannot be a cause.';
+  if (isRoot(causeId)) return 'A primary effect cannot be a cause.';
   if (state.links.some(l => l.effectId === effectId && l.causeId === causeId)) return 'It is already a cause of this effect.';
   if (reaches(causeId, effectId)) return 'That would make a loop: the effect is already among its causes.';
   return null;
@@ -33,6 +33,15 @@ function addLink(effectId, causeId) {
   const link = {id: uuid(), effectId, causeId};
   state.links.push(link);
   return link;
+}
+
+// A further problem in the same investigation: a new primary effect with its own tree, drawn below the
+// others, and its own problem statement and Is / Is Not.
+function addTree(title = 'Describe the primary effect') {
+  const n = blankNode('effect', title);
+  state.nodes.push(n);
+  state.moreProblems.push(blankProblem(n.id));
+  return n;
 }
 
 // In a cause tree a new cause has no type; it is given one if the RCA moves to Apollo.
@@ -311,9 +320,9 @@ function addAction(solutionId = '') {
 }
 const isOverdue = a => a.due && a.due < today() && !ACTION_DONE.includes(a.status) && a.status !== 'cancelled';
 
-// Nodes reachable from the primary effect.
-function reachable(links = state.links) {
-  const seen = new Set(), stack = [state.problem.primaryEffectId];
+// Nodes reachable from the primary effects.
+function reachable(links = state.links, roots = rootIds()) {
+  const seen = new Set(), stack = [...roots];
   while (stack.length) {
     const id = stack.pop();
     if (seen.has(id)) continue;
@@ -328,7 +337,7 @@ function reachable(links = state.links) {
 function deletionSet(...ids) {
   ids = ids.filter(id => id !== state.problem.primaryEffectId);
   const gone = new Set(ids), remaining = state.links.filter(l => !gone.has(l.effectId) && !gone.has(l.causeId));
-  const keep = reachable(remaining);
+  const keep = reachable(remaining, rootIds().filter(id => !gone.has(id)));
   return ids.length ? [...ids, ...state.nodes.filter(n => !gone.has(n.id) && !keep.has(n.id)).map(n => n.id)] : [];
 }
 function deleteNodes(ids) {
@@ -353,9 +362,10 @@ function deleteNodes(ids) {
       if (n) Object.assign(ev, {text: n.title, kind: ['action', 'condition'].includes(n.kind) ? n.kind : ev.kind, evidenceIds: [...n.evidenceIds], nodeId: null});
     }
   }
-  state.specification.tests = state.specification.tests.filter(t => !gone.has(t.causeId));
+  for (const sp of allSpecs()) sp.tests = sp.tests.filter(t => !gone.has(t.causeId));
   for (const r of state.comparison.rows) if (gone.has(r.nodeId)) r.nodeId = null;
   state.nodes = state.nodes.filter(n => !gone.has(n.id));
+  state.moreProblems = state.moreProblems.filter(p => !gone.has(p.effectId));
   state.links = state.links.filter(l => !gone.has(l.effectId) && !gone.has(l.causeId));
   for (const s of state.solutions) s.causeIds = s.causeIds.filter(id => !gone.has(id));
   for (const id of gone) collapsed.delete(id);
@@ -405,13 +415,13 @@ function placeCause(effectId, causeId, siblingId, after) {
 
 // Why the causes cannot be summarised, or null when they can. Returns their effect with `effect`.
 function summaryEffect(ids, prefer) {
-  if (ids.length < 2 || ids.includes(state.problem.primaryEffectId)) return null;
+  if (ids.length < 2 || ids.some(isRoot)) return null;
   const common = ids.map(id => new Set(effectLinks(id).map(l => l.effectId))).reduce((a, b) => new Set([...a].filter(id => b.has(id))));
   return common.has(prefer) ? prefer : [...common][0] ?? null;
 }
 function summaryProblem(ids, prefer) {
   if (ids.length < 2) return 'Select two or more causes to summarise: drag a box around them.';
-  if (ids.includes(state.problem.primaryEffectId)) return 'The primary effect cannot be summarised.';
+  if (ids.some(isRoot)) return 'A primary effect cannot be summarised.';
   if (ids.some(id => causeLinks(id).length)) return 'Only causes at the end of a branch can be summarised: these have causes of their own.';
   return summaryEffect(ids, prefer) ? null : 'Only causes of the same effect can be summarised.';
 }
@@ -459,7 +469,7 @@ function tidyOrGroups() {
 function alternativesProblem(ids, effectId) {
   if (treeStyle()) return 'In a cause tree every branch is an alternative already.';
   if (ids.length < 2) return 'Select two or more causes of one effect to make them alternatives: drag a box around them.';
-  if (ids.includes(state.problem.primaryEffectId)) return 'The primary effect cannot be an alternative.';
+  if (ids.some(isRoot)) return 'A primary effect cannot be an alternative.';
   if (!effectId || ids.some(id => !state.links.some(l => l.effectId === effectId && l.causeId === id))) return 'Only causes of the same effect can be alternatives.';
   return null;
 }
@@ -512,12 +522,18 @@ function issuesAfterSwitch(style) {
 // it could be but is not. Each candidate cause is then tested against every fact: does it explain why
 // the problem is here and not there? A fact is a question with either side answered.
 
-const specRow = id => state.specification.rows.find(r => r.id === id);
-const specFacts = () => state.specification.rows.filter(r => r.is.trim() || r.isNot.trim());
-const specLabel = r => `${SPEC_DIMS[r.dim]} ${state.specification.rows.filter(x => x.dim === r.dim).indexOf(r) + 1}`;
-const specTest = id => state.specification.tests.find(t => t.causeId === id);
-function specResult(test) {
-  const facts = specFacts(), mark = r => test.marks[r.id] || '';
+// Each problem has its own specification; without one given, these act on the one the page shows.
+const specRow = id => allSpecs().flatMap(sp => sp.rows).find(r => r.id === id);
+// The problem a question belongs to.
+const specRootOfRow = id => rootIds().find(root => specOf(root).rows.some(r => r.id === id));
+const specFacts = (sp = curSpec()) => sp.rows.filter(r => r.is.trim() || r.isNot.trim());
+const specLabel = r => {
+  const sp = allSpecs().find(x => x.rows.includes(r)) || curSpec();
+  return `${SPEC_DIMS[r.dim]} ${sp.rows.filter(x => x.dim === r.dim).indexOf(r) + 1}`;
+};
+const specTest = (id, sp = curSpec()) => sp.tests.find(t => t.causeId === id);
+function specResult(test, sp = curSpec()) {
+  const facts = specFacts(sp), mark = r => test.marks[r.id] || '';
   return {facts, no: facts.filter(r => mark(r) === 'no'), only: facts.filter(r => mark(r) === 'if'), open: facts.filter(r => !mark(r))};
 }
 const specSummary = res => res.no.length ? `Fails ${plural(res.no.length, 'fact')}`
@@ -604,7 +620,7 @@ const isRuledOut = n => treeStyle() && isCause(n) && n.status === 'ruled-out';
 // In a cause tree, the ruled-out causes on the tree; they are listed with the causes ruled out.
 const treeRuledOut = () => state.nodes.filter(isRuledOut);
 // The palette entry a node is drawn with.
-const nodeLook = n => n.id === state.problem.primaryEffectId || n.kind === 'effect' ? 'effect'
+const nodeLook = n => isRoot(n.id) || n.kind === 'effect' ? 'effect'
   : treeStyle() ? (n.status === 'ruled-out' ? 'ruled' : n.status) : n.kind;
 
 // Every rule issue: the chart's, by its style, and the records'. A node's issue has a nodeId; a
@@ -639,10 +655,11 @@ function causeIssues() {
     }
   }
   // A cause that fails a fact of the Is / Is Not cannot be the cause, or the fact is wrong.
-  for (const t of state.specification.tests) {
-    const n = byId(t.causeId), fails = n && live.has(n.id) && !(tree && n.status === 'ruled-out') ? specResult(t).no : [];
+  const several = rootIds().length > 1;
+  for (const root of rootIds()) for (const t of specOf(root).tests) {
+    const n = byId(t.causeId), fails = n && live.has(n.id) && !(tree && n.status === 'ruled-out') ? specResult(t, specOf(root)).no : [];
     if (fails.length) issues.push({nodeId: n.id, level: 'warning', code: 'spec-fails',
-      text: `Does not explain ${fails.map(specLabel).join(', ')} of the Is / Is Not: rule it out, or check the fact`});
+      text: `Does not explain ${fails.map(specLabel).join(', ')} of the Is / Is Not${several ? ` of ${problemName(root)}` : ''}: rule it out, or check the fact`});
   }
   // Once root causes are typed, the 8D questions not yet answered.
   const typed = new Set(state.nodes.filter(n => live.has(n.id) && isCause(n) && !(tree && n.status === 'ruled-out')).map(n => n.causeType));
@@ -671,9 +688,11 @@ function recordIssues() {
     'Ruled out without a reason: write the evidence or test that ruled it out');
   if (state.meta.status === 'closed') for (const b of closeBlockers()) add('team', 'status', 'RCA status', 'warning', 'closed-open', `Closed, but: ${b}`);
   // Thin IS NOT data is the most common weakness of a problem specification.
-  const stated = state.specification.rows.filter(r => r.is.trim()), bare = stated.filter(r => !r.isNot.trim());
-  if (stated.length >= 3 && bare.length * 2 > stated.length) add('spec', bare[0].id, 'Is / Is Not', 'info', 'spec-thin',
-    `${plural(bare.length, 'fact')} without an IS NOT: for each, say where, when, or what the problem could be but is not`);
+  for (const root of rootIds()) {
+    const stated = specOf(root).rows.filter(r => r.is.trim()), bare = stated.filter(r => !r.isNot.trim());
+    if (stated.length >= 3 && bare.length * 2 > stated.length) add('spec', bare[0].id, rootIds().length > 1 ? `Is / Is Not, ${problemName(root)}` : 'Is / Is Not', 'info', 'spec-thin',
+      `${plural(bare.length, 'fact')} without an IS NOT: for each, say where, when, or what the problem could be but is not`);
+  }
   for (const s of state.solutions) {
     const title = s.title || 'Untitled solution', actions = actionsOf(s.id).filter(a => a.status !== 'cancelled' && a.kind !== 'containment');
     if (s.decision !== 'reject' && !s.causeIds.some(byId)) add('solutions', s.id, title, 'warning', 'solution-cause', 'Attacks no cause: link the causes it removes');

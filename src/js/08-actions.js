@@ -15,6 +15,15 @@ function addSiblingToSelected() {
   placeCause(effectId, sibling.id, n.id, true);
   addedCause(sibling, false);
 }
+// A further problem: a second primary effect, with its own tree, in the same investigation; its title ready to type.
+function addTreeAndSelect() {
+  const n = addTree();
+  picked.clear(); selected = n.id;
+  if (record !== 'chart') showRecord('chart');
+  render(); persist();
+  scrollToNode(n.id); focusTitle();
+  setStatus(`Added ${problemName(n.id)}: name its primary effect, then add its causes with Tab. Its when, where, and Is / Is Not have their own pages`);
+}
 function addedCause(n, edit) {
   selected = n.id;
   render(); persist();
@@ -332,6 +341,7 @@ function unlinkFrom(effectId, causeId) {
 $('addAction').onclick = () => addCauseToSelected('action');
 $('addCondition').onclick = () => addCauseToSelected('condition');
 $('deleteNode').onclick = deleteSelected;
+$('addTree').onclick = addTreeAndSelect;
 $('linkCause').onclick = startLinking;
 $('summarise').onclick = summariseSelected;
 $('cancelLink').onclick = cancelLinking;

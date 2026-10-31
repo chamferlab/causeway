@@ -210,7 +210,7 @@ function fullReport() {
     <dl class="r-grid r-team">${item('Lead', rLead())}${item('Team', m.team.filter(t => t.id !== m.leadId).map(t => `${t.name}${t.role ? ' (' + t.role + ')' : ''}`).join('\n'))}</dl>
     <section>
       <h2>Problem definition</h2>
-      <dl class="r-grid two">${item('What', primaryEffect()?.title)}${item('When', p.when)}${item('Where', p.where)}</dl>
+      ${problemStatements(item)}
       <h3>Significance</h3>
       <dl class="r-grid">${item('Safety', sig.safety)}${item('Environment', sig.environment)}${item('Production / cost', sig.productionCost)}${item('Reliability', sig.reliability)}</dl>
       ${equipmentFilled() ? `<h3>Equipment and duty</h3>${EQUIPMENT_SECTIONS.filter(s => s.fields.some(f => state.equipment[f[0]]?.trim())).map(s => `<h4>${s.title}</h4>
@@ -219,7 +219,7 @@ function fullReport() {
     <section class="r-page">
       <h2>${treeStyle() ? 'Cause tree' : 'Cause-and-effect chart'}</h2>
       <p class="r-legend">${treeStyle()
-        ? 'Read left to right: each effect, then its possible causes. Red: primary effect. Solid teal, with a bold link: confirmed. White, dashed, H: hypothesis, still to test. Grey, struck through, ✕: ruled out. E-codes: evidence. Orange badge: no evidence. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'
+        ? 'Read left to right: each effect, then its possible causes. Red: primary effect. Solid teal, with a bold link: confirmed. White, dashed, H: hypothesis, still to test. Grey, RULED OUT, ✕: ruled out. E-codes: evidence. Orange badge: no evidence. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'
         : 'Read left to right: each effect, then the causes that were all needed for it (AND). OR, dashed: alternatives, one of which was needed, still to settle. Red: primary effect. Dark: action. Light: condition. E-codes: evidence. ?: no evidence or unverified. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'}</p>
       ${chartFigures().join('')}
       ${issues.length ? `<h3>Open rule issues</h3><ul>${issues.map(i => `<li class="${i.level === 'error' ? 'r-issue-error' : ''}">${escapeHtml(issueTitle(i))}: ${escapeHtml(i.text)}</li>`).join('')}</ul>` : ''}
@@ -240,14 +240,18 @@ function fullReport() {
           ${table(['Category', 'Possible cause', 'Type', 'Evidence', 'Status'], rows, 'No possible causes recorded.')}`;
       }).join('')}
     </section>` : ''}
-    ${specFacts().length ? `<section class="r-page">
+    ${allSpecs().some(sp => specFacts(sp).length) ? `<section class="r-page">
       <h2>Is / Is Not</h2>
-      ${table(['Question', 'Is', 'Is not', 'Distinctive about the IS', 'Changed'], specFacts().map(r => `<tr><td><b>${specLabel(r)}</b> ${text(r.question)}</td>
+      ${rootIds().filter(root => specFacts(specOf(root)).length).map(root => {
+        const sp = specOf(root), facts = specFacts(sp), tests = sp.tests.filter(t => byId(t.causeId));
+        return `${rootIds().length > 1 ? `<h3>${problemName(root)}: ${escapeHtml(byId(root).title)}</h3>` : ''}
+      ${table(['Question', 'Is', 'Is not', 'Distinctive about the IS', 'Changed'], facts.map(r => `<tr><td><b>${specLabel(r)}</b> ${text(r.question)}</td>
         <td>${text(r.is)}</td><td>${text(r.isNot)}</td><td>${text(r.distinction)}</td><td>${text(r.change)}</td></tr>`), '')}
-      ${state.specification.tests.some(t => byId(t.causeId)) ? `<h3>Possible causes tested against the facts</h3>
-        ${table(['Cause', ...specFacts().map(specLabel), 'Result'], state.specification.tests.filter(t => byId(t.causeId)).map(t => `<tr><td>${text(byId(t.causeId).title)}</td>
-          ${specFacts().map(f => `<td class="r-mark">${SPEC_MARKS[t.marks[f.id]]?.mark || '·'}</td>`).join('')}<td>${specSummary(specResult(t))}</td></tr>`), '')}
-        <p class="r-legend">✓ explains why the problem is here and not there; ? only if an assumption holds; ✕ does not explain it.</p>` : ''}
+      ${tests.length ? `<h4>Possible causes tested against the facts</h4>
+        ${table(['Cause', ...facts.map(specLabel), 'Result'], tests.map(t => `<tr><td>${text(byId(t.causeId).title)}</td>
+          ${facts.map(f => `<td class="r-mark">${SPEC_MARKS[t.marks[f.id]]?.mark || '·'}</td>`).join('')}<td>${specSummary(specResult(t, sp))}</td></tr>`), '')}
+        <p class="r-legend">✓ explains why the problem is here and not there; ? only if an assumption holds; ✕ does not explain it.</p>` : ''}`;
+      }).join('')}
     </section>` : ''}
     ${compareDiffs().length ? `<section class="r-page">${compareReport('<h2>Failed vs good</h2>')}</section>` : ''}
     ${state.timelines.length ? `<section class="r-page">
@@ -294,9 +298,15 @@ function fullReport() {
     <p class="r-foot">Causeway · ${escapeHtml(rcaName())} · printed ${today()}</p>`;
 }
 
+// What, when, and where of each problem; headed by its name when there are several.
+const problemStatements = item => rootIds().map(root => {
+  const at = problemOf(root);
+  return `${rootIds().length > 1 ? `<h3>${problemName(root)}</h3>` : ''}<dl class="r-grid two">${item('What', byId(root).title)}${item('When', at.when)}${item('Where', at.where)}</dl>`;
+}).join('');
+
 // 8D: the same RCA in the eight disciplines a customer's 8D request asks for.
 function report8D() {
-  const m = state.meta, p = state.problem, e = state.equipment, facts = specFacts();
+  const m = state.meta, p = state.problem, e = state.equipment;
   // The short disciplines stay whole on a page; D2 and D4 may run over.
   const d = (n, title, body) => `<section class="r-d${[2, 4].includes(n) ? '' : ' r-keep'}"><h2><span class="r-dnum">D${n}</span>${title}</h2>${body}</section>`;
   const roots = rootCauses(), groups = [...Object.entries(CAUSE_TYPES), ['', {name: 'Root causes, type not set'}]]
@@ -308,12 +318,13 @@ function report8D() {
   return `
     ${reportCover('8D report')}
     ${d(1, 'Team', rTable(['Name', 'Role', ''], m.team.map(t => `<tr><td>${rText(t.name)}</td><td>${rText(t.role)}</td><td>${t.id === m.leadId ? '<b>Lead</b>' : ''}</td></tr>`), 'No team recorded.'))}
-    ${d(2, 'Problem description', `<dl class="r-grid two">${rItem('What', primaryEffect()?.title)}${rItem('When', p.when)}${rItem('Where', p.where)}${rItem('Significance',
+    ${d(2, 'Problem description', `${problemStatements(rItem)}<dl class="r-grid two">${rItem('Significance',
       Object.entries({Safety: p.significance.safety, Environment: p.significance.environment, 'Production / cost': p.significance.productionCost, Reliability: p.significance.reliability})
         .filter(([, v]) => v.trim()).map(([k, v]) => `${k}: ${v}`).join('\n'))}</dl>
       ${keyData.length ? `<dl class="r-grid">${keyData.map(([k, v]) => rItem(k, v)).join('')}</dl>` : ''}
-      ${facts.length ? `<h3>Is / Is Not</h3>${rTable(['Question', 'Is', 'Is not', 'Distinctive', 'Changed'], facts.map(r => `<tr><td><b>${specLabel(r)}</b> ${rText(r.question)}</td>
-        <td>${rText(r.is)}</td><td>${rText(r.isNot)}</td><td>${rText(r.distinction)}</td><td>${rText(r.change)}</td></tr>`), '')}` : ''}`)}
+      ${rootIds().filter(root => specFacts(specOf(root)).length).map(root => `<h3>Is / Is Not${rootIds().length > 1 ? `, ${problemName(root).toLowerCase()}` : ''}</h3>${rTable(['Question', 'Is', 'Is not', 'Distinctive', 'Changed'],
+        specFacts(specOf(root)).map(r => `<tr><td><b>${specLabel(r)}</b> ${rText(r.question)}</td>
+        <td>${rText(r.is)}</td><td>${rText(r.isNot)}</td><td>${rText(r.distinction)}</td><td>${rText(r.change)}</td></tr>`), '')}`).join('')}`)}
     ${d(3, 'Containment actions', rTable(ACTION_HEADS, actionRows(actionsOfKind('containment')), 'No containment actions recorded.'))}
     ${d(4, 'Root causes', `${groups.length ? groups.map(([t, list]) => `<h3>${t.name}${t.about ? ` <span class="r-sub">${t.about.toLowerCase()}</span>` : ''}</h3>
         ${rTable(['Root cause', 'How it was verified', 'Evidence', 'Chain to the problem'], list.map(n => `<tr><td><b>${escapeHtml(n.title)}</b>${orNote(n) ? `<small class="r-tags">${escapeHtml(orNote(n))}</small>` : ''}</td><td>${rText(n.test)}</td>
@@ -351,7 +362,8 @@ function reportSummary() {
     </header>
     <div class="r-summary">
       <div class="r-block"><h3>The problem</h3>
-      <dl class="r-list">${key.map(([k, v]) => rItem(k, v)).join('')}${impact.map(([k, v]) => rItem(k, v)).join('')}</dl></div>
+      <dl class="r-list">${key.map(([k, v]) => rItem(k, v)).join('')}${rootIds().slice(1).map(root => rItem(problemName(root),
+        [byId(root).title, problemOf(root).when, problemOf(root).where].map(x => x.trim()).filter(Boolean).join('\n'))).join('')}${impact.map(([k, v]) => rItem(k, v)).join('')}</dl></div>
       <div class="r-block"><h3>Root causes</h3>
       ${roots.length ? `<ul class="r-roots">${roots.map(n => `<li><b>${escapeHtml(n.title)}</b>${n.causeType ? ` <span class="r-tagline">${CAUSE_TYPES[n.causeType].name}</span>` : ''}${orNote(n) ? `<div class="r-chain">${escapeHtml(orNote(n))}</div>` : ''}
         ${chain(n).length ? `<div class="r-chain">→ ${chain(n).join(' → ')}</div>` : ''}</li>`).join('')}</ul>` : '<p class="r-none">Not identified yet.</p>'}</div>

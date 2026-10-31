@@ -342,7 +342,7 @@ const GUIDES = {
     tips: [
       'A cause ruled out with no reason is flagged: someone will ask, and the answer should be here.',
       '“Unlikely” is not ruled out. If it has not been tested, it is still a hypothesis.',
-      'In a cause tree, ruled-out causes stay on the tree, struck through, and are listed here too.',
+      'In a cause tree, ruled-out causes stay on the tree, greyed and marked ruled out, and are listed here too.',
     ],
   },
   solutions: {

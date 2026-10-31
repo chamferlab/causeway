@@ -2441,6 +2441,88 @@ def run_tests(b):
     click('moduleRca')
     print('PASS: DFMEA print, Word, save, and open from either module', flush=True)
 
+    # ---- Two problems in one investigation, each with its own tree, statement, and Is / Is Not ----
+    tree = json.loads(json.dumps(rca()))
+    tree['meta']['style'] = 'tree'
+    load(tree)
+    first_ids = {n['id'] for n in rca()['nodes']}
+    first_spec = rca()['specification']
+    click('addTree')
+    r = rca(); root = r['nodes'][-1]
+    assert [x['effectId'] for x in r['moreProblems']] == [root['id']] and root['kind'] == 'effect'
+    assert r['moreProblems'][0]['when'] == '' and len(r['moreProblems'][0]['specification']['rows']) == len(first_spec['rows'])
+    assert b.js("return document.getElementById('addTree').textContent") == '+ Problem'
+    assert b.js("return document.activeElement.id") == 'nodeTitle', 'the new primary effect is ready to name'
+    type_into('nodeTitle', 'Bearing overheated')
+    b.js("document.activeElement.blur();return true")
+    select('Bearing overheated')
+    key('Tab')
+    cause = rca()['nodes'][-1]
+    assert cause['kind'] == 'cause' and next(l for l in rca()['links'] if l['causeId'] == cause['id'])['effectId'] == root['id']
+    ys = b.js("""return [...document.querySelectorAll('#chart .node')].map(g=>[g.dataset.id,+g.getAttribute('transform').split(' ')[1].replace(')','')])""")
+    top_of_second = dict(ys)[root['id']]
+    assert all(y < top_of_second for i, y in ys if i in first_ids), 'the second tree is drawn below the first'
+    key('Escape')
+    assert b.js("return document.querySelector('#properties [data-root]').value") == 'Bearing overheated'
+    # Problem definition: a statement per problem, with its own when and where.
+    page('problem')
+    assert b.js("return document.querySelectorAll('#records [data-act=remove-problem]').length") == 1, 'only a further problem can be removed'
+    set_field('moreProblems', root['id'], 'when', '15 Sep 2026, after the restart')
+    set_field('moreProblems', root['id'], 'where', 'P-101A, inboard bearing')
+    assert rca()['moreProblems'][0]['when'] == '15 Sep 2026, after the restart' and rca()['problem']['when'] == tree['problem']['when']
+    # Is / Is Not: tabs pick the problem; each has its own rows and its own causes to test.
+    page('spec')
+    tabs = b.js("return [...document.querySelectorAll('#records [data-act=spec-problem]')].map(t=>t.dataset.id)")
+    assert tabs == [r['problem']['primaryEffectId'], root['id']], tabs
+    act('spec-problem', root['id'])
+    row = rca()['moreProblems'][0]['specification']['rows'][0]['id']
+    set_field('specRows', row, 'is', 'Inboard bearing, 95 °C')
+    set_field('specRows', row, 'isNot', 'Outboard bearing, 60 °C')
+    act('spec-problem', root['id'])
+    options = b.js("return [...document.querySelectorAll('#records select[data-act=spec-add-test] option')].map(o=>o.value).filter(Boolean)")
+    assert options == [cause['id']], 'only the causes in this problem\'s tree can be tested'
+    b.js("const el=document.querySelector('#records select[data-act=spec-add-test]');el.value=arguments[0];el.dispatchEvent(new Event('change',{bubbles:true}));return true", [cause['id']])
+    mark = lambda: b.js('document.querySelector(`#records [data-act=spec-mark][data-id="${arguments[0]}"][data-row="${arguments[1]}"]`).click();return true', [cause['id'], row])
+    mark(); mark(); mark()
+    sp2 = rca()['moreProblems'][0]['specification']
+    assert sp2['rows'][0]['is'] == 'Inboard bearing, 95 °C' and sp2['tests'] == [{'causeId': cause['id'], 'marks': {row: 'no'}}]
+    assert rca()['specification'] == first_spec, 'the first problem\'s Is / Is Not is untouched'
+    assert any('of the Is / Is Not of Problem 2' in i['text'] for i in all_issues()), 'a failed fact names its problem'
+    # The reports give each problem its statement and its Is / Is Not.
+    b.js("window.print=()=>{};return true")
+    click('printReport'); click('printFull')
+    report = b.js("return document.getElementById('report').textContent")
+    assert 'Problem 2' in report and 'P-101A, inboard bearing' in report and 'Outboard bearing, 60 °C' in report
+    click('printReport'); click('print8d')
+    report = b.js("return document.getElementById('report').textContent")
+    assert 'Is / Is Not, problem 2' in report and '15 Sep 2026, after the restart' in report
+    page('chart')
+    # A ruled-out cause has no strike line over its title, and says RULED OUT on its top line.
+    select(cause['title'])
+    key('3', alt=True)
+    assert next(n for n in rca()['nodes'] if n['id'] == cause['id'])['status'] == 'ruled-out'
+    node = f"#chart .node[data-id='{cause['id']}']"
+    assert b.js(f'return document.querySelectorAll("{node} line").length') == 0, 'no strikethrough'
+    assert 'RULED OUT' in b.js(f'return document.querySelector("{node}").textContent')
+    # Kept in the file, and deleting the second primary effect takes its problem with it.
+    open_app()
+    assert rca()['moreProblems'][0]['specification']['tests'][0]['causeId'] == cause['id']
+    select('Bearing overheated')
+    key('Delete')
+    r = rca()
+    assert r['moreProblems'] == [] and not {root['id'], cause['id']} & {n['id'] for n in r['nodes']}
+    assert {n['id'] for n in r['nodes']} == first_ids, 'the first tree is untouched'
+    click('undo')
+    page('problem')
+    act('remove-problem', root['id'])
+    assert rca()['moreProblems'] == [], 'removed from the problem definition too'
+    bad = json.loads(json.dumps(r))
+    bad['moreProblems'] = [{'effectId': 'missing'}, {'effectId': r['problem']['primaryEffectId']}, {'effectId': next(iter(first_ids - {r['problem']['primaryEffectId']}))}]
+    load(bad)
+    assert rca()['moreProblems'] == [], 'unknown, duplicate, or cause problems are dropped on open'
+    page('chart')
+    print('PASS: two problems in one investigation, each with its own tree, statement, and Is / Is Not; ruled-out causes not struck through', flush=True)
+
     # ---- No network ----
     assert b.js("return performance.getEntriesByType('resource').filter(r=>!r.name.startsWith('blob:')&&!r.name.startsWith('data:')).length") == 0, 'no resources were fetched'
     assert b.js('return __violations') == []
