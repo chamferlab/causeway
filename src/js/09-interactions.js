@@ -224,6 +224,8 @@ window.addEventListener('keydown', e => {
     else if (code === 'm' && !e.shiftKey) { e.preventDefault(); startMoving(); }
     else if (code === 'g' && !e.shiftKey) { e.preventDefault(); summariseSelected(); }
     else if (code === 'o' && !e.shiftKey) { e.preventDefault(); alternativesSelected(); }
+    // Alt+Shift+O: on several causes, they become one alternative; on one node, it gets a new alternative.
+    else if (code === 'o') { e.preventDefault(); if (selection().length > 1) joinSelected(); else addScenarioToSelected(false); }
     return;
   }
   // Tab or Insert adds a cause of the selected node: an action, or with Shift a condition; in a cause

@@ -123,10 +123,10 @@ function chartFigures() {
   const cw = b.r - b.l + 2 * CHART_PAD, ch = b.b - b.t + 2 * CHART_PAD;
   const fit = Math.min(1, PRINT_W / cw, PRINT_H / ch);
   if (fit >= PRINT_MIN_SCALE) return [`<figure>${chartSvg(l, {heading: false, scale: fit})}</figure>`];
-  const s = PRINT_MIN_SCALE, column = NODE_W + COL_GAP;
+  const s = PRINT_MIN_SCALE, column = NODE_W + l.gap;
   const perTile = Math.max(1, Math.floor((PRINT_W / s - 2 * CHART_PAD) / column));
   const tileW = perTile * column, tileH = PRINT_H / s;
-  const cols = Math.ceil((b.r - b.l + COL_GAP) / tileW), rows = Math.ceil(ch / tileH);
+  const cols = Math.ceil((b.r - b.l + l.gap) / tileW), rows = Math.ceil(ch / tileH);
   const figures = [];
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
     const area = {x: b.l - CHART_PAD + c * tileW, y: b.t - CHART_PAD + r * tileH, w: tileW + (c === cols - 1 ? 2 * CHART_PAD : CHART_PAD), h: Math.min(tileH, ch - r * tileH)};
@@ -171,8 +171,8 @@ function rootCauses() {
 }
 // A root cause that is one of alternatives not yet settled says so, with the others.
 function orNote(n) {
-  const effect = effectsOf(n.id).find(e => alternativesOf(e.id, n.id).length);
-  return effect ? `One of: ${[n, ...alternativesOf(effect.id, n.id)].map(c => c.title).join(' / ')} (being tested)` : '';
+  const place = effectsOf(n.id).map(e => alternativePlace(e.id, n.id)).find(Boolean);
+  return place ? `One of: ${place.group.scenarios.map(scenarioName).join(' / ')} (being tested)` : '';
 }
 // A cause's chain up to the primary effect, along its first effect.
 function causeChain(n) {
@@ -220,7 +220,7 @@ function fullReport() {
       <h2>${treeStyle() ? 'Cause tree' : 'Cause-and-effect chart'}</h2>
       <p class="r-legend">${treeStyle()
         ? 'Read left to right: each effect, then its possible causes. Red: primary effect. Solid teal, with a bold link: confirmed. White, dashed, H: hypothesis, still to test. Grey, RULED OUT, ✕: ruled out. E-codes: evidence. Orange badge: no evidence. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'
-        : 'Read left to right: each effect, then the causes that were all needed for it (AND). OR, dashed: alternatives, one of which was needed, still to settle. Red: primary effect. Dark: action. Light: condition. E-codes: evidence. ?: no evidence or unverified. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'}</p>
+        : 'Read left to right: each effect, then the causes that were all needed for it (AND). OR, dashed: alternatives, one of which was needed, still to settle; the causes of one alternative are joined by their own AND. Red: primary effect. Dark: action. Light: condition. E-codes: evidence. ?: no evidence or unverified. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'}</p>
       ${chartFigures().join('')}
       ${issues.length ? `<h3>Open rule issues</h3><ul>${issues.map(i => `<li class="${i.level === 'error' ? 'r-issue-error' : ''}">${escapeHtml(issueTitle(i))}: ${escapeHtml(i.text)}</li>`).join('')}</ul>` : ''}
     </section>

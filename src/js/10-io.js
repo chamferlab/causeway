@@ -117,8 +117,9 @@ function normalizeProject(p) {
   state = {...s, links: []};
   try {
     for (const l of p.links) if (byId(l?.effectId) && byId(l?.causeId) && !linkProblem(l.effectId, l.causeId))
-      state.links.push({id: l.id || uuid(), effectId: l.effectId, causeId: l.causeId, ...typeof l.orGroup === 'string' && l.orGroup && {orGroup: l.orGroup}});
-    // A group of alternatives with one cause left is none.
+      state.links.push({id: l.id || uuid(), effectId: l.effectId, causeId: l.causeId, ...typeof l.orGroup === 'string' && l.orGroup && {orGroup: l.orGroup},
+        ...typeof l.orGroup === 'string' && l.orGroup && typeof l.scenario === 'string' && l.scenario && {scenario: l.scenario}});
+    // A group of alternatives with one alternative left is none.
     tidyOrGroups();
     return {...state};
   } finally { state = previous; }

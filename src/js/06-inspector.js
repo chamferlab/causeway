@@ -19,7 +19,7 @@ function renderProperties() {
 // Several nodes selected with Ctrl+click: group them, set their status, or delete them.
 function renderSelectionProperties(box, ids) {
   const nodes = ids.map(byId), tree = treeStyle(), problem = summaryProblem(ids, layout.parent.get(selected)), causes = nodes.filter(isCause);
-  const orProblem = alternativesProblem(ids, layout.parent.get(selected));
+  const orProblem = alternativesProblem(ids, layout.parent.get(selected)), oneProblem = joinProblem(ids, layout.parent.get(selected));
   box.innerHTML = `
     <div class="kind-row"><span class="kind-chip action">${ids.length} SELECTED</span><span class="muted">Ctrl+click adds or takes out one</span></div>
     <ul class="cause-list">${nodes.map(n => `<li><button data-goto="${n.id}">${swatch(n)}${escapeHtml(n.title)}</button></li>`).join('')}</ul>
@@ -31,9 +31,12 @@ function renderSelectionProperties(box, ids) {
     </div>
     ${tree ? '' : `<div class="section">
       <div class="panel-title">Alternatives (OR)</div>
-      <p class="note" style="margin-top:0">One of them caused the effect, but the evidence cannot yet tell which. They are marked unverified until all but one are ruled out.</p>
-      <button class="button block" id="inspAlternatives" ${orProblem ? 'disabled' : ''} title="Alt+O">Make them alternatives</button>
-      ${orProblem ? `<p class="note">${escapeHtml(orProblem)}</p>` : ''}
+      <p class="note" style="margin-top:0">One explanation caused the effect, but the evidence cannot yet tell which. Make each of them an alternative, or make them together one alternative: an action and the condition it acted on, all needed (AND). Alternatives are unverified until all but one are ruled out.</p>
+      <div class="button-grid">
+        <button class="button" id="inspAlternatives" ${orProblem ? 'disabled' : ''} title="Each cause an alternative of its own (Alt+O)">Make them alternatives</button>
+        <button class="button" id="inspOneAlternative" ${oneProblem ? 'disabled' : ''} title="All of them one alternative, joined by AND (Alt+Shift+O)">Make them one alternative</button>
+      </div>
+      ${orProblem || oneProblem ? `<p class="note">${escapeHtml(orProblem || oneProblem)}</p>` : ''}
     </div>`}
     ${tree && causes.length ? `<div class="section"><div class="panel-title">Status of ${plural(causes.length, 'cause')}</div>
       <div class="segmented status" role="group" aria-label="Status">${Object.entries(STATUSES).map(([k, st], i) =>
@@ -43,6 +46,7 @@ function renderSelectionProperties(box, ids) {
   box.querySelectorAll('[data-status]').forEach(b => b.onclick = () => setNodeStatus(b.dataset.status));
   $('inspSummarise').onclick = summariseSelected;
   if ($('inspAlternatives')) $('inspAlternatives').onclick = alternativesSelected;
+  if ($('inspOneAlternative')) $('inspOneAlternative').onclick = joinSelected;
   if ($('inspDelete')) $('inspDelete').onclick = deleteSelected;
 }
 
@@ -98,7 +102,8 @@ function renderRcaProperties(box) {
         <dt><kbd>Alt+L</kbd></dt><dd>Link an existing node as a cause</dd>
         <dt>Drag on the canvas</dt><dd>Select the nodes in the box. <kbd>Ctrl+click</kbd> adds or takes out one</dd>
         <dt><kbd>Alt+G</kbd></dt><dd>Add a summary: one cause shared by the selected causes</dd>${tree ? '' : `
-        <dt><kbd>Alt+O</kbd></dt><dd>Make the selected causes alternatives (OR); on one of them, take it out</dd>`}
+        <dt><kbd>Alt+O</kbd></dt><dd>Make the selected causes alternatives (OR); on one of them, take it out</dd>
+        <dt><kbd>Alt+Shift+O</kbd></dt><dd>Make the selected causes one alternative (AND); on one node, add an alternative: an action and a condition</dd>`}
         <dt>Right-drag, wheel</dt><dd>Pan, zoom</dd>
         <dt><kbd>Space</kbd></dt><dd>Collapse or expand the branch</dd>
         <dt><kbd>Esc</kbd></dt><dd>Cancel linking, moving, or a drag; or clear the selection. In the title: undo what was typed</dd>
@@ -125,7 +130,7 @@ function renderNodeProperties(box, n) {
   const evidence = n.evidenceIds.map(evidenceById).filter(Boolean);
   const solutions = solutionsOf(n.id);
   const tree = treeStyle();
-  const alternatives = tree || isPrimary ? [] : alternativesOf(layout.parent.get(n.id), n.id);
+  const place = tree || isPrimary ? null : alternativePlace(layout.parent.get(n.id), n.id);
   const kindName = isPrimary ? 'Primary effect' : tree ? {possible: 'Hypothesis', confirmed: 'Confirmed cause', 'ruled-out': 'Ruled out'}[n.status] : KINDS[n.kind].name;
   const about = [causes.length && !isPrimary ? 'also an effect' : '', causes.length ? `${causes.length} cause${causes.length > 1 ? 's' : ''}` : '',
     layout.summaries.some(x => x.id === n.id) ? `summary of ${effects.length} causes` : effects.length > 1 ? `supports ${effects.length} effects` : ''].filter(Boolean).join(' · ');
@@ -149,11 +154,14 @@ function renderNodeProperties(box, n) {
     <div class="segmented cause-type" role="group" aria-label="Root cause type">${Object.entries(CAUSE_TYPES).map(([k, t]) =>
       `<button data-cause-type="${k}" ${pressed(n.causeType === k)} title="${t.about}${n.causeType === k ? '. Click again to clear' : ''}">${t.name}</button>`).join('')}</div>`}
     ${n.stopPoint ? `<label class="field" for="nodeStopReason">Why the branch stops</label><select class="text" id="nodeStopReason">${Object.entries(STOP_REASONS).map(([k, v]) => `<option value="${k}" ${n.stopPoint.reason === k ? 'selected' : ''}>${v}</option>`).join('')}</select>` : ''}
-    ${alternatives.length ? `<div class="section">
-      <div class="panel-title">Alternatives (OR) · one of ${alternatives.length + 1}</div>
-      <p class="note" style="margin-top:0">This or one of these caused the effect; the evidence must settle which.</p>
-      <ul class="cause-list">${alternatives.map(c => `<li><button data-goto="${c.id}">${swatch(c)}${escapeHtml(c.title)}</button></li>`).join('')}</ul>
-      <div class="button-grid">
+    ${place ? `<div class="section">
+      <div class="panel-title">Alternatives (OR) · one of ${place.group.scenarios.length}</div>
+      <p class="note" style="margin-top:0">${place.mine.length > 1 ? `This alternative is ${escapeHtml(scenarioName(place.mine))}, all needed together (AND). It` : 'This'} or one of these caused the effect; the evidence must settle which.</p>
+      <ul class="cause-list">${place.others.map(sc => `<li><button data-goto="${sc[0].id}">${swatch(sc[0])}${escapeHtml(scenarioName(sc))}</button></li>`).join('')}</ul>
+      <label class="field" for="nodeScenario">Part of</label>
+      <select class="text" id="nodeScenario">${place.group.scenarios.map((sc, i) => `<option value="${escapeHtml(place.group.keys[i])}" ${i === place.index ? 'selected' : ''}>Alternative ${i + 1}: ${escapeHtml(shorten(scenarioName(sc), 44))}</option>`).join('')}
+        ${place.mine.length > 1 ? '<option value="new">A new alternative of its own</option>' : ''}</select>
+      <div class="button-grid" style="margin-top:8px">
         <button class="button" id="inspKeep" title="Move the other alternatives to the causes ruled out">Keep this one</button>
         <button class="button" id="inspLeave" title="It was needed, with the other causes (AND) (Alt+O)">Not an alternative</button>
       </div>
@@ -178,7 +186,8 @@ function renderNodeProperties(box, n) {
       ${causes.length ? `<ul class="cause-list">${causes.map(c => `<li><button data-goto="${c.id}">${swatch(c)}${escapeHtml(c.title)}</button></li>`).join('')}</ul>` : '<p class="note" style="margin-top:0">No causes yet.</p>'}
       <div class="button-grid">
         ${tree ? '<button class="button" id="inspAddAction" title="Insert, Tab, or Alt+A">+ Cause</button>' : `<button class="button" id="inspAddAction" title="Insert, Tab, or Alt+A">+ Action</button>
-        <button class="button" id="inspAddCondition" title="Shift+Insert, Shift+Tab, or Alt+C">+ Condition</button>`}
+        <button class="button" id="inspAddCondition" title="Shift+Insert, Shift+Tab, or Alt+C">+ Condition</button>
+        <button class="button" id="inspAddScenario" title="Another explanation, an action and a condition, joined by OR with ${causes.length ? 'the causes there now' : 'a first one'} (Alt+Shift+O)">+ Alternative (OR)</button>`}
         <button class="button" id="inspLink" title="Link a node already on the chart as a further cause (Alt+L)">Link existing</button>
         ${causes.length ? `<button class="button" id="inspCollapse" title="Space">${collapsed.has(n.id) ? 'Expand branch' : 'Collapse branch'}</button>` : ''}
         <button class="button" id="inspCopy" title="Copy this node and every cause under it (Ctrl+C)">Copy branch</button>
@@ -222,6 +231,8 @@ function renderNodeProperties(box, n) {
     if (n.title !== titleBefore) restoreHistory(); else e.target.blur();
   };
   if ($('inspKeep')) $('inspKeep').onclick = keepAlternative;
+  if ($('nodeScenario')) $('nodeScenario').onchange = e => moveScenarioSelected(e.target.value);
+  if ($('inspAddScenario')) $('inspAddScenario').onclick = () => addScenarioToSelected();
   if ($('inspLeave')) $('inspLeave').onclick = alternativesSelected;
   if ($('nodeTest')) $('nodeTest').oninput = e => { n.test = e.target.value; persist('test:' + n.id); };
   box.querySelectorAll('[data-status]').forEach(b => b.onclick = () => setNodeStatus(b.dataset.status));

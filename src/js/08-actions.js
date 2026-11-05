@@ -13,6 +13,8 @@ function addSiblingToSelected() {
   if (!effectId) { setStatus('The primary effect has no siblings: Tab adds a cause'); return; }
   const sibling = addCause(effectId, ['action', 'condition'].includes(n.kind) ? n.kind : 'action');
   placeCause(effectId, sibling.id, n.id, true);
+  // Beside a cause of an alternative (OR), it joins that alternative.
+  joinSibling(effectId, sibling.id, n.id);
   addedCause(sibling, false);
 }
 // A further problem: a second primary effect, with its own tree, in the same investigation; its title ready to type.
@@ -74,7 +76,7 @@ function selectMany(ids) {
   picked = new Set(ids.length > 1 ? ids : []);
   selected = ids.at(-1) ?? null;
   render();
-  if (picked.size > 1) setStatus(`${plural(picked.size, 'node')} selected${summaryProblem(ids, layout.parent.get(selected)) ? '' : ': Alt+G gives them a summary'}${alternativesProblem(ids, layout.parent.get(selected)) ? '' : ', Alt+O makes them alternatives (OR)'}`);
+  if (picked.size > 1) setStatus(`${plural(picked.size, 'node')} selected${summaryProblem(ids, layout.parent.get(selected)) ? '' : ': Alt+G gives them a summary'}${alternativesProblem(ids, layout.parent.get(selected)) ? '' : ', Alt+O makes them alternatives (OR), Alt+Shift+O one alternative'}`);
 }
 function togglePicked(id) {
   const ids = selection();
@@ -134,15 +136,47 @@ function alternativesSelected() {
   render(); persist();
   setStatus(`${plural(ids.length, 'alternative')} (OR), marked unverified: test them, and rule out all but one`);
 }
+// Keep this one: the cause's alternative stays, and the causes of the others are ruled out.
 function keepAlternative() {
-  const n = byId(selected), effectId = layout.parent.get(selected), others = alternativesOf(effectId, selected);
-  if (!n || !others.length) return;
-  const ids = deletionSet(...others.map(c => c.id)), more = ids.length - others.length;
-  if (!confirm(`Keep "${n.title}" and move ${others.length === 1 ? `"${others[0].title}"` : plural(others.length, 'alternative')} to the causes ruled out?${more ? ` The ${plural(more, 'cause')} that only they support will be deleted.` : ''}`)) return;
+  const n = byId(selected), effectId = layout.parent.get(selected), place = n && alternativePlace(effectId, selected);
+  if (!place) return;
+  const others = place.others.flat(), ids = deletionSet(...others.map(c => c.id)), more = ids.length - others.length;
+  const what = place.others.length === 1 ? `"${scenarioName(place.others[0])}"` : plural(place.others.length, 'alternative');
+  if (!confirm(`Keep "${scenarioName(place.mine)}" and move ${what} to the causes ruled out?${more ? ` The ${plural(more, 'cause')} that only they support will be deleted.` : ''}`)) return;
   for (const c of others) toRuledOut(c);
   deleteNodes(ids);
   render(); persist();
-  setStatus(`Kept "${n.title}": ${plural(others.length, 'alternative')} moved to the causes ruled out`);
+  setStatus(`Kept "${scenarioName(place.mine)}": ${plural(others.length, 'cause')} of the other ${place.others.length === 1 ? 'alternative' : 'alternatives'} moved to the causes ruled out`);
+}
+// Alt+Shift+O: a new alternative explanation of the selected node, an action and a condition, joined by
+// OR with its other alternatives. With none yet, its causes become the first.
+function addScenarioToSelected(edit = true) {
+  const n = byId(selected);
+  if (!n) return;
+  if (treeStyle()) { setStatus('In a cause tree every branch is an alternative already: + Cause adds one'); return; }
+  const had = causesOf(n.id).length, grouped = orGroupsOf(n.id).length;
+  const action = addScenario(n.id);
+  picked.clear();
+  addedCause(action, edit);
+  setStatus(grouped ? 'Added an alternative (OR): an action and a condition, both unverified. Name them'
+    : had ? `The ${plural(had, 'cause')} of "${n.title}" are now one alternative, and a second is added: an action and a condition (OR). Name them`
+    : 'Added two alternatives (OR), each an action and a condition, all unverified. Name them');
+}
+// The selected causes of one effect become one alternative: all needed together (AND).
+function joinSelected() {
+  const ids = selection(), effectId = layout.parent.get(selected), problem = joinProblem(ids, effectId);
+  if (problem) { setStatus(problem); return; }
+  const action = joinScenario(ids, effectId);
+  if (action) { picked.clear(); addedCause(action, true); }
+  else { render(); persist(); }
+  setStatus(action ? `${plural(ids.length, 'cause')} made one alternative; a second alternative is added (OR): name its action and condition`
+    : `${plural(ids.length, 'cause')} made one alternative (AND), unverified until the evidence settles it`);
+}
+function moveScenarioSelected(key) {
+  const effectId = layout.parent.get(selected);
+  moveToScenario(effectId, selected, key);
+  render(); persist();
+  setStatus(key === 'new' ? 'Now an alternative of its own' : 'Moved to that alternative');
 }
 
 // A cause tree: Alt+1, Alt+2, and Alt+3 set the status of the selected causes. A confirmed cause happened,

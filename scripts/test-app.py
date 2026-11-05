@@ -1949,6 +1949,133 @@ def run_tests(b):
     load(open_before)
     print('PASS: alternatives (OR) in Apollo: grouping, drawing, rules, settling, and files', flush=True)
 
+    # ---- Alternatives of several causes: OR between whole explanations, each an action and a condition ----
+    def scenario_ands():
+        return b.js("return document.querySelectorAll('#chart .junction.scenario').length")
+
+    def alternatives_in_file(effect):
+        links = [l for l in rca()['links'] if l['effectId'] == node_id(effect) and l.get('orGroup')]
+        found = {}
+        for l in links:
+            found.setdefault(l.get('scenario') or l['causeId'], set()).add(next(n['title'] for n in rca()['nodes'] if n['id'] == l['causeId']))
+        return sorted(found.values(), key=lambda x: sorted(x))
+
+    click('newProject')
+    b.js('document.querySelector("#dialog [data-choice=apollo]").click();return true')
+    set_title('Faces damaged')
+    # Alt+Shift+O on an effect without causes: two alternatives, each an action and a condition.
+    select('Faces damaged'); key('o', shift=True, alt=True)
+    pairs = [('Pump started without venting', 'Seal chamber is the high point'), ('Cold flush hit hot faces', 'SiC face with low shock resistance')]
+    links = [l for l in rca()['links'] if l['effectId'] == node_id('Faces damaged')]
+    assert len(links) == 4 and len({l['orGroup'] for l in links}) == 1 and len({l['scenario'] for l in links}) == 2, 'one OR of two alternatives'
+    kinds = [next(n['kind'] for n in rca()['nodes'] if n['id'] == l['causeId']) for l in links]
+    assert kinds == ['action', 'condition', 'action', 'condition']
+    for l, title in zip(links, [t for pair in pairs for t in pair]):
+        select(next(n['title'] for n in rca()['nodes'] if n['id'] == l['causeId'])); set_title(title)
+    assert alternatives_in_file('Faces damaged') == [set(pairs[1]), set(pairs[0])] or alternatives_in_file('Faces damaged') == [set(pairs[0]), set(pairs[1])]
+    assert all(node(t)['unverified'] for pair in pairs for t in pair), 'the alternatives are unverified'
+    assert or_pills() == 1 and scenario_ands() == 2 and b.js("return document.querySelectorAll('#chart .junction:not(.or):not(.scenario)').length") == 0, 'OR, then an AND for each alternative'
+    check_layout()
+    texts = issue_texts()
+    assert texts.count('One of 2 alternatives (OR): test them, and rule out all but one') == 4
+    assert not any('Needs' in t or 'of its own' in t for t in texts), 'each alternative is complete'
+    # The causes of each alternative stay together, its action above its condition.
+    order = sorted(boxes(), key=lambda x: x['y'])
+    titles = [next(n['title'] for n in rca()['nodes'] if n['id'] == x['id']) for x in order if x['id'] != node_id('Faces damaged')]
+    assert titles in ([*pairs[0], *pairs[1]], [*pairs[1], *pairs[0]]), titles
+    # The properties show the alternative and the other one.
+    select('Pump started without venting')
+    props = b.js("return document.getElementById('properties').textContent")
+    assert 'Alternatives (OR) · one of 2' in props and 'Cold flush hit hot faces + SiC face with low shock resistance' in props
+    # Enter beside a cause of an alternative adds to that alternative.
+    key('Enter'); set_title('Vent valve closed')
+    assert {'Pump started without venting', 'Seal chamber is the high point', 'Vent valve closed'} in alternatives_in_file('Faces damaged')
+    click('undo'); click('undo')
+    assert len(rca()['nodes']) == 5
+    # A third alternative, with Alt+Shift+O on the effect, joins the same group.
+    select('Faces damaged'); key('o', shift=True, alt=True)
+    assert len(alternatives_in_file('Faces damaged')) == 3 and or_pills() == 1 and scenario_ands() == 3
+    click('undo')
+    # Evidence verifies an alternative; Keep this one rules out the causes of the other.
+    proven = rca()
+    proven['evidence'] = [{'id': 'f3c1d2a4-0000-4000-8000-000000000001', 'code': 'E1', 'description': 'Vent valve found closed; seal chamber high point on the drawing', 'type': 'sensed', 'source': '', 'collectedBy': '', 'date': '2026-11-05'}]
+    for n in proven['nodes']:
+        if n['title'] in pairs[0]: n.update(unverified=False, evidenceIds=['f3c1d2a4-0000-4000-8000-000000000001'])
+    load(proven)
+    assert 'Verified: rule out its alternatives (Keep this one)' in issue_texts()
+    assert 'Its alternative "Pump started without venting + Seal chamber is the high point" is verified: rule this one out' in issue_texts()
+    select('Seal chamber is the high point'); click('inspKeep')
+    assert sorted(r['cause'] for r in rca()['ruledOut']) == sorted(pairs[1]) and or_pills() == 0 and scenario_ands() == 0
+    assert not any(l.get('orGroup') or l.get('scenario') for l in rca()['links']), 'the group is settled'
+    click('undo')
+    assert or_pills() == 1 and not rca()['ruledOut']
+    # Moving a cause to its own alternative leaves the other incomplete, and it says so.
+    select('Seal chamber is the high point')
+    b.js("const s=document.getElementById('nodeScenario');s.value='new';s.dispatchEvent(new Event('change'));return true")
+    assert len(alternatives_in_file('Faces damaged')) == 3
+    assert any('This alternative has no condition of its own' in t for t in issue_texts())
+    assert any('This alternative has no action of its own' in t for t in issue_texts())
+    click('undo')
+    assert len(alternatives_in_file('Faces damaged')) == 2
+    # The file keeps the alternatives; one alternative left is no group.
+    grouped = rca()
+    load(grouped)
+    assert or_pills() == 1 and scenario_ands() == 2 and rca()['links'] == grouped['links']
+    one = json.loads(json.dumps(grouped))
+    for l in one['links']: l['scenario'] = 'same'
+    load(one)
+    assert or_pills() == 0 and not any(l.get('orGroup') or l.get('scenario') for l in rca()['links']), 'one alternative is no group'
+    load(grouped)
+    # Copy and paste keeps the alternatives, with new keys.
+    select('Faces damaged'); ctrl('c')
+    select('Faces damaged'); click('addAction'); set_title('Leak')
+    select('Leak'); ctrl('v')
+    pasted = [l for l in rca()['links'] if l.get('orGroup') and l['effectId'] != node_id('Faces damaged')]
+    assert len(pasted) == 4 and len({l['scenario'] for l in pasted}) == 2 and not {l['orGroup'] for l in pasted} & {l['orGroup'] for l in grouped['links']}
+    load(grouped)
+
+    # The old pattern, an OR of actions AND an OR of conditions, opens as it was and is flagged.
+    select('Pump started without venting'); b.js("const s=document.getElementById('nodeScenario');s.value='new';s.dispatchEvent(new Event('change'));return true")
+    select('Seal chamber is the high point'); b.js('document.getElementById("inspLeave").click();return true')
+    select('SiC face with low shock resistance'); b.js('document.getElementById("inspLeave").click();return true')
+    box_select('Seal chamber is the high point', 'SiC face with low shock resistance'); key('o', alt=True)
+    assert or_pills() == 2 and scenario_ands() == 0, 'two groups of single causes'
+    texts = issue_texts()
+    assert any(t.startswith('2 groups of alternatives (OR) allow every mix of them') for t in texts)
+    assert sum('This alternative has no condition of its own' in t for t in texts) == 2 and sum('This alternative has no action of its own' in t for t in texts) == 2
+    assert not any('Needs' in t for t in texts), 'the effect itself has an action and a condition either way'
+    # Pairing them up again, one alternative at a time: select an action and its condition, Make them one alternative.
+    select('Pump started without venting'); ctrl_click('Seal chamber is the high point')
+    assert 'Make them one alternative' in b.js("return document.getElementById('properties').textContent")
+    click('inspOneAlternative')
+    assert or_pills() == 1 and scenario_ands() == 1, 'the first pair is one alternative; the group it left is gone'
+    select('Cold flush hit hot faces'); ctrl_click('SiC face with low shock resistance')
+    key('o', shift=True, alt=True)
+    assert or_pills() == 1 and scenario_ands() == 2 and len(rca()['nodes']) == 5
+    assert sorted(map(sorted, alternatives_in_file('Faces damaged'))) == sorted(map(sorted, map(set, pairs))), 'mended: two whole alternatives'
+    assert not any('of its own' in t or 'allow every mix' in t for t in issue_texts())
+    load(grouped)
+    # Plain causes, joined: Make them one alternative starts a group, with a second alternative to name.
+    click('newProject')
+    b.js('document.querySelector("#dialog [data-choice=apollo]").click();return true')
+    set_title('Seal leaks')
+    select('Seal leaks'); key('Insert'); set_title('Dry running')
+    select('Seal leaks'); key('Insert', shift=True); set_title('No vent on the seal chamber')
+    select('Seal leaks'); key('Insert', shift=True); set_title('Product near its vapour pressure')
+    box_select('Dry running', 'No vent on the seal chamber')
+    click('inspOneAlternative')
+    assert len(rca()['nodes']) == 6 and or_pills() == 1 and scenario_ands() == 2
+    assert {'Dry running', 'No vent on the seal chamber'} in alternatives_in_file('Seal leaks') and {'New action', 'New condition'} in alternatives_in_file('Seal leaks')
+    assert not any(l.get('orGroup') for l in rca()['links'] if l['causeId'] == node_id('Product near its vapour pressure')), 'the other cause stays, shared by both (AND)'
+    assert b.js("return document.querySelectorAll('#chart .junction:not(.or):not(.scenario)').length") == 1
+    check_layout()
+    # On an effect with causes, + Alternative makes them the first alternative.
+    click('undo')
+    select('Seal leaks'); click('inspAddScenario')
+    assert len(alternatives_in_file('Seal leaks')) == 2 and {'Dry running', 'No vent on the seal chamber', 'Product near its vapour pressure'} in alternatives_in_file('Seal leaks')
+    load(open_before)
+    print('PASS: alternatives of several causes: OR between whole explanations, each with its own AND', flush=True)
+
     # ---- Layout of other chart shapes ----
     SIBLING_GAP = 16  # as in 01-constants.js
 

@@ -163,6 +163,7 @@ const TITLE_LINE = 16;
 const TITLE_SIZE = 12.5;
 const FOOT_LINE = 20;        // evidence codes and tags under the title
 const COL_GAP = 84;          // horizontal space between columns, where the connectors run
+const SCENARIO_GAP = 48;     // more of it when an alternative (OR) of several causes has its own AND
 const SIBLING_GAP = 16;      // vertical space between neighbouring causes
 const SUBTREE_GAP = 30;      // and between neighbouring branches
 const CHART_FONT = '"Segoe UI", system-ui, -apple-system, Arial, sans-serif';

@@ -319,10 +319,12 @@ const GUIDES = {
       'Where one cause supports several effects, <b>Link cause</b> (<kbd>Alt+L</kbd>) draws the second link.',
       'End each branch with a <b>stop point</b> and its reason. Tick <b>Controllable</b> on causes you can change, and give root causes their <b>type</b>: occurrence, escape point, or systemic.',
       'Rule out what the evidence disproves with <b>Rule out</b>; it moves to the causes ruled out.',
-      'When the evidence cannot yet tell which of some causes it was, select them and press <kbd>Alt+O</kbd>: they become <b>alternatives</b>, joined by a dashed <b>OR</b>. Test them, then choose <b>Keep this one</b> on the cause the evidence confirms; the others are ruled out.',
+      'When the evidence cannot yet tell which explanation it was, chart the explanations as <b>alternatives</b>, joined by a dashed <b>OR</b>. Each alternative is a whole explanation: an action and the condition it acted on, joined by their own <b>AND</b>. Select the effect and choose <b>+ Alternative (OR)</b> (<kbd>Alt+Shift+O</kbd>): its causes become the first alternative, and a second, an action and a condition, is added to name. <kbd>Enter</kbd> beside a cause of an alternative adds another cause to it.',
+      'Or select causes of one effect and press <kbd>Alt+O</kbd> to make each an alternative of its own, or <kbd>Alt+Shift+O</kbd> to make them together one alternative. Test the alternatives, then choose <b>Keep this one</b> on a cause of the one the evidence confirms; the causes of the others are ruled out.',
     ],
     tips: [
       'An effect with only an action, or only a condition, is incomplete: the chart outlines it.',
+      'Do not put an OR between two actions and another OR between two conditions: that allows every mix of them, most of which explain nothing. Pair each action with its condition as one alternative.',
       'A branch that ends at a human error is not done: ask why the error was possible.',
       'Look for all three root cause types: why it happened, why it was not caught, and what in the system allowed it.',
       'The issues button lists everything the chart still needs.',
