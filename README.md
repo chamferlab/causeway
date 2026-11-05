@@ -33,7 +33,7 @@ Each has a guide: what the method is, when to use it, how to fill it in step by 
 | Dark teal box | **Action**: a momentary cause, at a point in time |
 | Light box with a teal border | **Condition**: a cause that existed over time |
 | **AND** on a connector | The causes joined there were all needed |
-| Dashed **OR** on a connector | Alternatives: one of the causes joined there was needed, and the evidence must still settle which |
+| Dashed **OR** on a connector | Alternatives: one of the explanations joined there was needed, and the evidence must still settle which; an alternative of several causes has its own **AND** |
 | Orange **?** | A cause with no evidence linked, or marked as an unverified candidate |
 | Dashed orange outline | An effect that lacks an action or a condition cause |
 | Double bar and **STOP** | A stop point |
@@ -86,7 +86,7 @@ One cause can support more than one effect. To chart that:
 **Drag a box** on the empty canvas to select the nodes it touches; each is outlined. **Ctrl+click** (**Cmd+click** on a Mac) adds one node or takes it out. A click on a node selects it alone. To pan, drag with the **right** or **middle** mouse button; the wheel zooms. With two or more selected, the properties panel lists them and acts on them all:
 
 - **Summary** (in the edit bar, or **Alt+G**): when several causes at the end of their branches may come from one deeper cause, a new cause shared by all of them goes to their right, drawn with a brace across them. Its title is ready to type, and it is tested like any other cause: confirming it confirms the causes it summarises. The causes must share an effect and have no causes of their own; they are put next to each other.
-- In Apollo, **Make them alternatives** (**Alt+O**): see below.
+- In Apollo, **Make them alternatives** (**Alt+O**) or **Make them one alternative** (**Alt+Shift+O**): see below.
 - In a cause tree, set the **status** of them all (**Alt+1**, **Alt+2**, **Alt+3**).
 - **Delete** them all (**Del**), with the causes that only they support.
 
@@ -94,15 +94,32 @@ A summary stays drawn with its brace while it is the only cause of its causes an
 
 ## Alternatives (OR) in Apollo
 
-In Apollo, each cause of an effect was needed (AND). When the evidence cannot yet tell which of some causes it was, say dry running or faces installed out of square, make them **alternatives**: select them (drag a box, or Ctrl+click) and press **Alt+O**, or **Make them alternatives** in the properties. They are causes of the same effect.
+In Apollo, each cause of an effect was needed (AND). When the evidence cannot yet tell which explanation it was, chart the explanations as **alternatives**, joined by a dashed **OR**. Each alternative is a whole explanation: usually an action and the condition it acted on, joined by their own **AND**.
 
-- They are drawn together on their own bracket, marked with a dashed **OR**, and joined to the effect's other causes by AND. Each is marked unverified (**?**).
-- For the rule that an effect needs an action and a condition, a group counts as an action only when each of its causes is an action, and as a condition only when each is a condition.
-- Each alternative shows the issue *One of N alternatives (OR): test them, and rule out all but one*. When one is verified (evidence, and not unverified), the others ask to be ruled out.
-- To settle the group, select the cause the evidence confirms and choose **Keep this one** in its properties: the others move to the causes ruled out, with their evidence and test. **Rule out** on one alternative works as usual; a group with one cause left is no longer a group.
-- **Alt+O** on one alternative, or **Not an alternative**, takes it out of its group: it was needed, with the others.
+```
+                         ┌ Action:    pump started without venting
+                ┌─ AND ──┤
+                │        └ Condition: seal chamber is the high point
+Effect ──── OR ─┤
+                │        ┌ Action:    cold flush hit hot faces
+                └─ AND ──┤
+                         └ Condition: SiC face with low shock resistance
+```
+
+Put the OR between whole explanations, not between loose actions and loose conditions. An OR of two actions joined by AND to an OR of two conditions allows every mix of them, such as *pump started without venting* with *SiC face with low shock resistance*, most of which explain nothing.
+
+- **+ Alternative (OR)** in the effect's properties, or **Alt+Shift+O** with the effect selected, adds an alternative: an action and a condition to name. With no alternatives yet, the effect's causes become the first one; with no causes either, two alternatives are added.
+- Select causes of one effect (drag a box, or Ctrl+click) and choose **Make them one alternative** (**Alt+Shift+O**) to make them together one alternative. If they were not alternatives yet, a second alternative is added to name.
+- **Make them alternatives** (**Alt+O**) makes each selected cause an alternative of its own: fine when each is a whole explanation with the effect's other causes, for example two actions that would each explain the effect with one shared condition.
+- **Enter** beside a cause of an alternative adds another cause to that alternative. **Part of**, in a cause's properties, moves it to another alternative of its group, or to one of its own.
+- The alternatives are drawn on their own bracket, marked with a dashed **OR**; an alternative of several causes has its own **AND**, and the columns of the chart are then a little further apart. The group and the effect's other causes, which every alternative needs, are joined by AND. New alternatives are marked unverified (**?**).
+- For the rule that an effect needs an action and a condition, a group counts as an action only when each of its alternatives has one, and as a condition only when each has one.
+- An alternative that, with the effect's other causes, has no action or no condition says so: *This alternative has no condition of its own*. An effect with two or more groups of alternatives is flagged too: pair each action with its condition, one alternative at a time, with **Make them one alternative**, and the groups merge into one.
+- Each cause of an alternative shows the issue *One of N alternatives (OR): test them, and rule out all but one*. An alternative is verified when each of its causes is (evidence, and not unverified); then the others ask to be ruled out.
+- To settle the group, select a cause of the alternative the evidence confirms and choose **Keep this one** in its properties: the causes of the other alternatives move to the causes ruled out, with their evidence and test. **Rule out** on one cause works as usual; a group with one alternative left is no longer a group.
+- **Alt+O** on one alternative's cause, or **Not an alternative**, takes it out of its group: it was needed, with all of them.
 - An RCA cannot be **closed** while a group is not settled, and the 8D report says so under *Not ready to close*. A root cause in an open group is listed with its alternatives, *One of: … (being tested)*.
-- Groups are saved in the file, on the links (`orGroup`), and copied with a branch. A cause tree has no groups: its branches are alternatives already, and switching to it and back keeps them.
+- Groups are saved in the file, on the links: `orGroup` for the group, and `scenario` shared by the causes of one alternative (a link without one is an alternative of its own, as in older files, which open unchanged). They are copied with a branch. A cause tree has no groups: its branches are alternatives already, and switching to it and back keeps them.
 
 ## Move and reorder causes
 
@@ -286,6 +303,7 @@ With a node selected and no field focused:
 | **→** | Select a cause; on a collapsed node, expand it |
 | **↑ ↓** | Select the node above or below in the same column |
 | **Alt+O** | Make the selected causes alternatives (OR); on one alternative, take it out of its group (Apollo) |
+| **Alt+Shift+O** | Make the selected causes one alternative (AND); on one node, add an alternative, an action and a condition (Apollo) |
 | **Alt+M** | Move the cause under another effect |
 | **Alt+↑ Alt+↓** | Move the cause above or below its neighbour |
 | **Shift+↑ Shift+↓** | Move the cause up or down by hand, with its branch |

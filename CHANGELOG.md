@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.24 — 2026-11-05
+
+In Apollo, an OR picks between whole explanations.
+
+- An alternative (OR) can now be several causes, all needed together: usually an action and the condition it acted on, joined by their own **AND** between the OR and the causes. The OR then chooses between complete explanations instead of between loose actions and loose conditions, which allowed every mix of them.
+- **+ Alternative (OR)** in an effect's properties, or **Alt+Shift+O**, adds an alternative, an action and a condition to name; with none yet, the effect's causes become the first. **Make them one alternative** (**Alt+Shift+O** with several causes selected) joins causes into one alternative. **Enter** beside a cause of an alternative adds to it, and **Part of** in its properties moves it to another.
+- An alternative verified on every cause asks for the others to be ruled out; **Keep this one** rules out the causes of the other alternatives.
+- New issues: an alternative without its own action or condition, and an effect with more than one group of alternatives (the old OR of actions AND OR of conditions). Pairing the causes up with **Make them one alternative** mends it.
+- Files keep the causes of one alternative with a `scenario` key on their links. Older files open unchanged: each cause in a group is an alternative of its own.
+
 ## v1.23 — 2026-10-31
 
 More than one problem in one investigation, and readable ruled-out causes.

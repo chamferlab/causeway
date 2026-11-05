@@ -1024,7 +1024,7 @@ textarea.answer { font-size: 14px; font-weight: 600; min-height: 32px; resize: n
   <footer>
     <span id="status">Ready</span>
     <span id="count">0 causes · 0 evidence items</span>
-    <span class="keyhints" id="keyHints">Type to rename · <kbd>Tab</kbd> action · <kbd>Shift+Tab</kbd> condition · <kbd>Enter</kbd> sibling · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Alt+O</kbd> alternatives (OR) · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete</span>
+    <span class="keyhints" id="keyHints">Type to rename · <kbd>Tab</kbd> action · <kbd>Shift+Tab</kbd> condition · <kbd>Enter</kbd> sibling · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Alt+O</kbd> alternatives (OR) · <kbd>Alt+Shift+O</kbd> one alternative · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete</span>
   </footer>
 </div>
 <dialog id="dialog" class="dialog"></dialog>
@@ -1197,6 +1197,7 @@ const TITLE_LINE = 16;
 const TITLE_SIZE = 12.5;
 const FOOT_LINE = 20;        // evidence codes and tags under the title
 const COL_GAP = 84;          // horizontal space between columns, where the connectors run
+const SCENARIO_GAP = 48;     // more of it when an alternative (OR) of several causes has its own AND
 const SIBLING_GAP = 16;      // vertical space between neighbouring causes
 const SUBTREE_GAP = 30;      // and between neighbouring branches
 const CHART_FONT = '"Segoe UI", system-ui, -apple-system, Arial, sans-serif';
@@ -1473,7 +1474,7 @@ function copyBranchData(id) {
   return {
     type: BRANCH_TYPE, rcaId: state.id, rootId: id,
     nodes: state.nodes.filter(n => ids.has(n.id)).map(n => JSON.parse(JSON.stringify(n))),
-    links: state.links.filter(l => ids.has(l.effectId) && ids.has(l.causeId)).map(({effectId, causeId, orGroup}) => ({effectId, causeId, ...orGroup && {orGroup}})),
+    links: state.links.filter(l => ids.has(l.effectId) && ids.has(l.causeId)).map(({effectId, causeId, orGroup, scenario}) => ({effectId, causeId, ...orGroup && {orGroup}, ...orGroup && scenario && {scenario}})),
   };
 }
 // The branch as an indented list of titles, for pasting into other programs, as text and as HTML.
@@ -1510,10 +1511,13 @@ function pasteBranchData(data, effectId) {
       offsetY: old !== data.rootId && Number.isFinite(n.offsetY) ? n.offsetY : 0});
   }
   addLink(effectId, ids.get(data.rootId));
-  const groups = new Map();
+  const groups = new Map(), fresh = key => groups.get(key) ?? groups.set(key, uuid()).get(key);
   for (const l of data.links) {
     const link = ids.has(l?.effectId) && ids.has(l?.causeId) && addLink(ids.get(l.effectId), ids.get(l.causeId));
-    if (link && typeof l.orGroup === 'string' && l.orGroup) link.orGroup = groups.get(l.orGroup) ?? groups.set(l.orGroup, uuid()).get(l.orGroup);
+    if (link && typeof l.orGroup === 'string' && l.orGroup) {
+      link.orGroup = fresh(l.orGroup);
+      if (typeof l.scenario === 'string' && l.scenario) link.scenario = fresh(l.scenario);
+    }
   }
   // Nodes the links do not reach from the root are left out.
   const reached = new Set(branchIds(ids.get(data.rootId)));
@@ -1788,7 +1792,7 @@ function moveCause(causeId, fromId, toId) {
   const link = state.links.find(l => l.effectId === fromId && l.causeId === causeId);
   state.links.splice(state.links.indexOf(link), 1);
   link.effectId = toId;
-  delete link.orGroup;
+  delete link.orGroup; delete link.scenario;
   state.links.push(link);
   tidyOrGroups();
   byId(causeId).offsetY = 0;
@@ -1838,32 +1842,66 @@ function summariseCauses(ids, effectId) {
 
 // ---- Alternatives (OR) ----
 // In Apollo each cause of an effect was needed (AND). While the evidence cannot yet tell which of some
-// causes it was, they can be charted as alternatives: an OR group, any one of which, with the effect's
-// other causes, would explain it. The group is held on their links to the effect, as `orGroup`; the
-// group and the effect's other causes are joined by AND. It is settled by ruling out all but one, and
-// a group with one cause left is no group. A cause tree has none: its branches are alternatives already.
+// explanations it was, they can be charted as alternatives: an OR group, any one of which, with the
+// effect's other causes, would explain it. Each alternative is a whole explanation: one cause, or
+// several that were all needed together (AND), typically an action with the condition it acted on. So
+// an OR picks between complete explanations, never between loose actions and loose conditions, which
+// would allow every mix of them.
+//
+// The group is held on the causes' links to the effect, as `orGroup`; the causes of one alternative
+// share a `scenario` key on their links (a link without one is an alternative of its own). The group
+// and the effect's other causes are joined by AND. It is settled by ruling out all alternatives but
+// one, and a group with one alternative left is no group. A cause tree has none: its branches are
+// alternatives already.
 
-// The effect's causes as AND units: a cause alone, or a group of alternatives, in link order.
+const scenarioKey = l => l.scenario || l.causeId;
+
+// The effect's causes as AND units: a cause alone, or a group of alternatives, in link order. A group
+// is the list of its causes, with `scenarios`: its alternatives, each the list of its causes.
 function causeUnits(effectId) {
   const units = [], groups = new Map();
   for (const l of causeLinks(effectId)) {
     const c = byId(l.causeId);
     if (!c) continue;
     if (!l.orGroup || treeStyle()) { units.push([c]); continue; }
-    if (!groups.has(l.orGroup)) units.push(groups.set(l.orGroup, []).get(l.orGroup));
-    groups.get(l.orGroup).push(c);
+    let g = groups.get(l.orGroup);
+    if (!g) { g = []; g.byKey = new Map(); units.push(g); groups.set(l.orGroup, g); }
+    g.push(c);
+    const key = scenarioKey(l);
+    if (!g.byKey.has(key)) g.byKey.set(key, []);
+    g.byKey.get(key).push(c);
   }
+  for (const g of groups.values()) { g.scenarios = [...g.byKey.values()]; g.keys = [...g.byKey.keys()]; delete g.byKey; }
+  for (const u of units) if (!u.scenarios) { u.scenarios = [[u[0]]]; u.plain = true; }
   return units;
 }
-const orGroupsOf = effectId => causeUnits(effectId).filter(u => u.length > 1);
-// The other causes in the cause's group under the effect.
-const alternativesOf = (effectId, causeId) => orGroupsOf(effectId).find(u => u.some(c => c.id === causeId))?.filter(c => c.id !== causeId) ?? [];
+const orGroupsOf = effectId => causeUnits(effectId).filter(u => u.scenarios.length > 1);
+// Where the cause is among the alternatives of the effect: its group, its own alternative (`mine`,
+// with its key) and the others, or null when it is not an alternative.
+function alternativePlace(effectId, causeId) {
+  const group = orGroupsOf(effectId).find(u => u.some(c => c.id === causeId));
+  if (!group) return null;
+  const i = group.scenarios.findIndex(sc => sc.some(c => c.id === causeId));
+  return {group, mine: group.scenarios[i], key: group.keys[i], index: i, others: group.scenarios.filter((_, j) => j !== i)};
+}
+// The causes in the other alternatives of the cause's group under the effect.
+const alternativesOf = (effectId, causeId) => alternativePlace(effectId, causeId)?.others.flat() ?? [];
+const scenarioName = causes => causes.map(c => c.title.trim() || 'Untitled').join(' + ');
 const openOrGroups = () => treeStyle() ? [] : [...reachable()].flatMap(orGroupsOf);
-// A group needs two causes of one effect.
+// A group needs two alternatives of one effect; a scenario key with one cause is no more than the cause.
 function tidyOrGroups() {
-  const count = new Map(), key = l => l.effectId + ' ' + l.orGroup;
-  for (const l of state.links) if (l.orGroup) count.set(key(l), (count.get(key(l)) || 0) + 1);
-  for (const l of state.links) if (l.orGroup && count.get(key(l)) < 2) delete l.orGroup;
+  const keys = new Map(), uses = new Map(), group = l => l.effectId + ' ' + l.orGroup;
+  for (const l of state.links) {
+    if (!l.orGroup) { delete l.scenario; continue; }
+    if (!keys.has(group(l))) keys.set(group(l), new Set());
+    keys.get(group(l)).add(scenarioKey(l));
+    if (l.scenario) uses.set(group(l) + ' ' + l.scenario, (uses.get(group(l) + ' ' + l.scenario) || 0) + 1);
+  }
+  for (const l of state.links) {
+    if (!l.orGroup) continue;
+    if (keys.get(group(l)).size < 2) { delete l.orGroup; delete l.scenario; }
+    else if (l.scenario && uses.get(group(l) + ' ' + l.scenario) < 2) delete l.scenario;
+  }
 }
 function alternativesProblem(ids, effectId) {
   if (treeStyle()) return 'In a cause tree every branch is an alternative already.';
@@ -1872,20 +1910,94 @@ function alternativesProblem(ids, effectId) {
   if (!effectId || ids.some(id => !state.links.some(l => l.effectId === effectId && l.causeId === id))) return 'Only causes of the same effect can be alternatives.';
   return null;
 }
-// One new group, taking the causes out of any they were in. Their links are put together, where the
-// first of them is, and each is unverified until the evidence settles it.
-function makeAlternatives(ids, effectId) {
-  const members = new Set(ids), links = state.links.filter(l => l.effectId === effectId && members.has(l.causeId)), group = uuid();
+// Puts the links together, where the first of them is.
+function gatherLinks(links) {
   const at = state.links.indexOf(links[0]);
   state.links = state.links.filter(l => !links.includes(l));
   state.links.splice(at, 0, ...links);
-  for (const l of links) { l.orGroup = group; byId(l.causeId).unverified = true; byId(l.causeId).offsetY = 0; }
+}
+// One new group, taking the causes out of any they were in; each cause is an alternative of its own,
+// and unverified until the evidence settles it.
+function makeAlternatives(ids, effectId) {
+  const members = new Set(ids), links = state.links.filter(l => l.effectId === effectId && members.has(l.causeId)), group = uuid();
+  gatherLinks(links);
+  for (const l of links) { l.orGroup = group; delete l.scenario; byId(l.causeId).unverified = true; byId(l.causeId).offsetY = 0; }
   tidyOrGroups();
 }
 function leaveAlternatives(effectId, causeId) {
   const link = state.links.find(l => l.effectId === effectId && l.causeId === causeId);
-  if (link) delete link.orGroup;
+  if (link) { delete link.orGroup; delete link.scenario; }
   tidyOrGroups();
+}
+// A new alternative under the effect: an action and the condition it acted on, both unverified. It
+// joins the effect's group of alternatives, the last if it has more than one. With no group yet, the
+// effect's causes become the first alternative, or, with none, a first action and condition are added
+// too. Returns the new action.
+function addScenario(effectId, group = orGroupsOf(effectId).at(-1)) {
+  let groupId = group && state.links.find(l => l.effectId === effectId && l.causeId === group[0].id).orGroup;
+  if (!groupId) {
+    groupId = uuid();
+    const links = causeLinks(effectId);
+    if (links.length) {
+      const key = uuid();
+      for (const l of links) { l.orGroup = groupId; l.scenario = key; byId(l.causeId).unverified = true; byId(l.causeId).offsetY = 0; }
+    } else newScenario(effectId, groupId);
+  }
+  const action = newScenario(effectId, groupId);
+  tidyOrGroups();
+  collapsed.delete(effectId);
+  return action;
+}
+function newScenario(effectId, groupId) {
+  const key = uuid(), made = ['action', 'condition'].map(kind => addCause(effectId, kind));
+  for (const n of made) {
+    n.unverified = true;
+    Object.assign(state.links.find(l => l.effectId === effectId && l.causeId === n.id), {orGroup: groupId, scenario: key});
+  }
+  return made[0];
+}
+// Several causes of one effect become one alternative: causes that were all needed together. In a
+// group already, they leave their alternatives for a new one in that group (the first, if they come from
+// two, as an OR of actions and an OR of conditions do: pairing them up this way, one alternative at a
+// time, mends it). Otherwise they start a group, with a second alternative, an action and a condition,
+// to name. Returns that new action, if any.
+function joinProblem(ids, effectId) {
+  const problem = alternativesProblem(ids, effectId);
+  return problem && problem.replace('to make them alternatives', 'to make them one alternative');
+}
+function joinScenario(ids, effectId) {
+  const members = new Set(ids), links = state.links.filter(l => l.effectId === effectId && members.has(l.causeId));
+  const existing = links.find(l => l.orGroup)?.orGroup, groupId = existing || uuid(), key = uuid();
+  gatherLinks(links);
+  for (const l of links) { l.orGroup = groupId; l.scenario = key; byId(l.causeId).unverified = true; byId(l.causeId).offsetY = 0; }
+  const action = existing ? null : newScenario(effectId, groupId);
+  tidyOrGroups();
+  return action;
+}
+// Moves the cause to another alternative of its group, by key, or with 'new' to one of its own.
+function moveToScenario(effectId, causeId, key) {
+  const link = state.links.find(l => l.effectId === effectId && l.causeId === causeId);
+  if (!link?.orGroup) return;
+  if (key === 'new') link.scenario = uuid();
+  else {
+    // A cause alone in its alternative has the key of its cause: name it, so others can join it.
+    const target = state.links.find(l => l.effectId === effectId && l.orGroup === link.orGroup && scenarioKey(l) === key);
+    if (!target) return;
+    target.scenario = key;
+    link.scenario = key;
+    gatherLinks([target, link]);
+  }
+  byId(causeId).offsetY = 0;
+  tidyOrGroups();
+}
+// A cause added beside one in an alternative joins that alternative.
+function joinSibling(effectId, causeId, siblingId) {
+  const from = state.links.find(l => l.effectId === effectId && l.causeId === siblingId), link = state.links.find(l => l.effectId === effectId && l.causeId === causeId);
+  if (!from?.orGroup || !link || !alternativePlace(effectId, siblingId)) return false;
+  from.scenario = scenarioKey(from);
+  Object.assign(link, {orGroup: from.orGroup, scenario: from.scenario});
+  byId(causeId).unverified = true;
+  return true;
 }
 
 // Expands every collapsed branch that hides the node. Returns whether anything changed.
@@ -2140,18 +2252,29 @@ function apolloIssues() {
     const causes = causesOf(n.id);
     const isEffect = causes.length > 0 || n.kind === 'effect';
     if (isEffect) {
-      // A group of alternatives counts as an action, or a condition, only when each of them is one.
-      const units = causeUnits(n.id), missing = ['action', 'condition'].filter(kind => !units.some(u => u.every(c => c.kind === kind)));
+      // A group of alternatives counts as an action, or a condition, only when each alternative has one.
+      const units = causeUnits(n.id), missing = ['action', 'condition'].filter(kind => !units.some(u => u.scenarios.every(sc => sc.some(c => c.kind === kind))));
       if (missing.length) issues.push({nodeId: n.id, level: 'error', code: 'causal-set',
         text: `Needs ${missing.length === 2 ? 'an action and a condition' : missing[0] === 'action' ? 'an action' : 'a condition'} cause`});
     }
-    // Alternatives are settled by ruling out all but one.
-    for (const group of orGroupsOf(n.id)) {
-      const verified = group.find(c => !needsEvidence(c));
-      for (const c of group) issues.push({nodeId: c.id, level: 'warning', code: 'alternatives', text: !verified
-        ? `One of ${group.length} alternatives (OR): test them, and rule out all but one`
-        : c === verified ? 'Verified: rule out its alternatives (Keep this one)' : `Its alternative "${verified.title}" is verified: rule this one out`});
+    // Alternatives are settled by ruling out all but one. An alternative is verified when each of its causes is.
+    const groups = orGroupsOf(n.id), shared = causeUnits(n.id).filter(u => u.plain).flat();
+    for (const group of groups) {
+      const verified = group.scenarios.find(sc => sc.every(c => !needsEvidence(c)));
+      for (const sc of group.scenarios) {
+        for (const c of sc) issues.push({nodeId: c.id, level: 'warning', code: 'alternatives', text: !verified
+          ? `One of ${group.scenarios.length} alternatives (OR): test them, and rule out all but one`
+          : sc === verified ? 'Verified: rule out its alternatives (Keep this one)' : `Its alternative "${scenarioName(verified)}" is verified: rule this one out`});
+        // Each alternative is a whole explanation: with the effect's other causes, an action and a condition.
+        const with_ = [...sc, ...shared];
+        if (sc.some(c => c.kind === 'cause')) continue;
+        const lacking = ['action', 'condition'].filter(kind => !with_.some(c => c.kind === kind));
+        if (lacking.length) for (const c of sc) issues.push({nodeId: c.id, level: 'warning', code: 'alternative-set',
+          text: `This alternative has no ${lacking.join(' or ')} of its own: each alternative (OR) is a whole explanation, an action and a condition joined by AND`});
+      }
     }
+    if (groups.length > 1) issues.push({nodeId: n.id, level: 'warning', code: 'or-groups',
+      text: `${groups.length} groups of alternatives (OR) allow every mix of them: put each action with its condition as one alternative (select them, then Make them one alternative)`});
     if (isCause(n) && needsEvidence(n)) issues.push({nodeId: n.id, level: 'warning', code: 'evidence',
       text: n.unverified ? 'Marked unverified' : 'No evidence linked'});
     if (isCause(n) && !causes.length && !n.stopPoint) issues.push({nodeId: n.id, level: 'info', code: 'open-branch',
@@ -2256,19 +2379,26 @@ function computeLayout() {
     children.get(l.effectId).push(byId(l.causeId));
   }
   // Within an effect, its actions come above its conditions, and causes without a type below them.
-  // Alternatives (OR) stay together, where the first of their kinds would go. In a cause tree, causes
-  // keep their order.
+  // Alternatives (OR) stay together, where the first of their kinds would go; within the group, the
+  // causes of each alternative stay together, its actions above its conditions. In a cause tree,
+  // causes keep their order.
   const order = {action: 0, condition: 1, cause: 2, effect: 3};
   if (!treeStyle()) for (const [effectId, list] of children) {
-    const unit = new Map(), place = new Map(), first = new Map();
-    for (const l of links) if (l.effectId === effectId) unit.set(l.causeId, l.orGroup || l.causeId);
+    const unit = new Map(), scene = new Map(), place = new Map(), first = new Map(), firstScene = new Map();
+    for (const l of links) if (l.effectId === effectId) { unit.set(l.causeId, l.orGroup || l.causeId); scene.set(l.causeId, l.orGroup ? scenarioKey(l) : l.causeId); }
     list.forEach((k, i) => {
-      const u = unit.get(k.id);
+      const u = unit.get(k.id), sc = scene.get(k.id);
       place.set(u, Math.min(place.get(u) ?? Infinity, order[k.kind]));
       if (!first.has(u)) first.set(u, i);
+      if (!firstScene.has(sc)) firstScene.set(sc, i);
     });
-    list.sort((a, b) => place.get(unit.get(a.id)) - place.get(unit.get(b.id)) || first.get(unit.get(a.id)) - first.get(unit.get(b.id)));
+    const key = k => [place.get(unit.get(k.id)), first.get(unit.get(k.id)), firstScene.get(scene.get(k.id)), order[k.kind]];
+    list.sort((a, b) => { const x = key(a), y = key(b); return x[0] - y[0] || x[1] - y[1] || x[2] - y[2] || x[3] - y[3]; });
   }
+  // Alternatives of more than one cause each get an AND of their own, between the OR and the causes,
+  // so the columns are then further apart.
+  const gap = !treeStyle() && links.some(l => l.orGroup && links.some(o => o !== l && o.effectId === l.effectId && o.orGroup === l.orGroup && scenarioKey(o) === scenarioKey(l)))
+    ? COL_GAP + SCENARIO_GAP : COL_GAP;
 
   // Summaries drawn as such: {id, members}, the causes it is the only cause of, neighbours under one
   // effect, in their order. The summary is taken out of its first member's causes, and is placed with them.
@@ -2363,7 +2493,7 @@ function computeLayout() {
     const origin = bottom === null ? 0 : bottom + SUBTREE_GAP * 2 - (Math.min(...t.contour.map(c => c[0])) - top);
     for (const [id, y] of t.members) {
       const size = sizes.get(id);
-      boxes.set(id, {id, node: byId(id), x: rank.get(id) * (NODE_W + COL_GAP), y: y - top + origin, inSummary: inSummary.has(id), ...size});
+      boxes.set(id, {id, node: byId(id), x: rank.get(id) * (NODE_W + gap), y: y - top + origin, inSummary: inSummary.has(id), ...size});
     }
     bottom = origin + Math.max(...t.contour.map(c => c[1])) - top;
   }
@@ -2371,14 +2501,15 @@ function computeLayout() {
   const placed = links.filter(l => boxes.has(l.effectId) && boxes.has(l.causeId));
   // parent and children: the effect each cause is drawn under, and each effect's causes in drawing order.
   // summaries: those drawn with a brace.
-  return {boxes, edges: routeEdges(boxes, placed, parent, rank, summaries), bounds: chartBounds(boxes), parent, children, summaries};
+  // gap: the space between columns.
+  return {boxes, edges: routeEdges(boxes, placed, parent, rank, summaries, gap), bounds: chartBounds(boxes), parent, children, summaries, gap};
 }
 
 // ---- Connectors ----
 
 const midY = b => b.y + b.h / 2;
 
-function routeEdges(boxes, links, parent, rank, summaries) {
+function routeEdges(boxes, links, parent, rank, summaries, gap = COL_GAP) {
   const edges = [], braced = new Set(summaries.map(x => x.id));
   // A summary: a brace across its members, from just right of them, pointing at it.
   for (const sum of summaries) {
@@ -2397,37 +2528,48 @@ function routeEdges(boxes, links, parent, rank, summaries) {
     groups.get(l.effectId).push(l);
   }
   for (const [effectId, group] of groups) {
-    const e = boxes.get(effectId), bx = e.x + e.w + COL_GAP / 2;
+    const e = boxes.get(effectId), bx = e.x + e.w + gap / 2;
     // Alternatives (OR) meet on a second bracket nearer the causes, marked OR where they join the first.
+    // An alternative of several causes has a third bracket, marked AND, where they join the OR.
     const alternatives = new Map();
     if (!treeStyle()) for (const l of group) if (l.orGroup) alternatives.set(l.orGroup, [...alternatives.get(l.orGroup) || [], l]);
-    for (const [g, list] of alternatives) if (list.length < 2) alternatives.delete(g);
-    const ox = bx + 27, ors = [], inOr = new Set([...alternatives.values()].flat());
-    const ys = group.map(l => midY(boxes.get(l.causeId)));
+    for (const [g, list] of alternatives) if (new Set(list.map(scenarioKey)).size < 2) alternatives.delete(g);
+    const wide = gap > COL_GAP, ox = bx + (wide ? 20 : 27), sx = bx + 48, ors = [], ands = [], inOr = new Set([...alternatives.values()].flat());
     let d = `M ${e.x + e.w} ${midY(e)} H ${bx}`;
-    const joins = [midY(e)];
-    for (const l of group) {
-      const c = boxes.get(l.causeId);
-      d += ` M ${inOr.has(l) ? ox : bx} ${midY(c)} H ${c.x}`;
-      if (!inOr.has(l)) joins.push(midY(c));
-    }
+    const joins = [midY(e)], start = new Map();
     for (const list of alternatives.values()) {
-      const lys = list.map(l => midY(boxes.get(l.causeId))), top = Math.min(...lys), bottom = Math.max(...lys), y = (top + bottom) / 2;
+      const scenes = new Map();
+      for (const l of list) scenes.set(scenarioKey(l), [...scenes.get(scenarioKey(l)) || [], l]);
+      const lys = [];
+      for (const members of scenes.values()) {
+        const cys = members.map(l => midY(boxes.get(l.causeId)));
+        if (members.length < 2) { lys.push(cys[0]); start.set(members[0], ox); continue; }
+        const st = Math.min(...cys), sb = Math.max(...cys), sy = (st + sb) / 2;
+        d += ` M ${ox} ${sy} H ${sx} M ${sx} ${st} V ${sb}`;
+        for (const l of members) start.set(l, sx);
+        lys.push(sy); ands.push({x: sx, y: sy});
+      }
+      const top = Math.min(...lys), bottom = Math.max(...lys), y = (top + bottom) / 2;
       d += ` M ${bx} ${y} H ${ox} M ${ox} ${top} V ${bottom}`;
       joins.push(y); ors.push({x: ox, y});
+    }
+    for (const l of group) {
+      const c = boxes.get(l.causeId);
+      d += ` M ${start.get(l) ?? bx} ${midY(c)} H ${c.x}`;
+      if (!inOr.has(l)) joins.push(midY(c));
     }
     d += ` M ${bx} ${Math.min(...joins)} V ${Math.max(...joins)}`;
     // Two or more causes under one effect are joined by AND, marked where the bracket meets the effect;
     // a group of alternatives is one of them.
     const units = group.length - inOr.size + alternatives.size;
-    edges.push({d, shared: false, effectId, linkIds: group.map(l => l.id), junction: units > 1 ? {x: bx, y: midY(e)} : null, ors,
+    edges.push({d, shared: false, effectId, linkIds: group.map(l => l.id), junction: units > 1 ? {x: bx, y: midY(e)} : null, ors, ands,
       from: {x: e.x + e.w, y: midY(e)}, bx, branches: group.map(l => ({id: l.causeId, x: boxes.get(l.causeId).x, y: midY(boxes.get(l.causeId))}))});
   }
 
   // Further links of shared causes get their own lanes beside the brackets.
   const columns = new Map();
   for (const b of boxes.values()) {
-    const r = Math.round(b.x / (NODE_W + COL_GAP));
+    const r = Math.round(b.x / (NODE_W + gap));
     if (!columns.has(r)) columns.set(r, []);
     columns.get(r).push(b);
   }
@@ -2573,8 +2715,10 @@ function chartMarkup(l, opts = {}) {
   else for (const e of l.edges) {
     s += `<path class="edge${e.summary ? ' brace' : ''}" data-effect="${e.effectId}" d="${e.d}" fill="none" stroke="${e.shared ? C.shared : C.wire}" stroke-width="1.6"${e.shared ? ' stroke-dasharray="6 4"' : ''}/>`;
   }
-  // AND where an effect's causes meet; OR, dashed, where a group of alternatives joins them.
+  // AND where an effect's causes meet; OR, dashed, where a group of alternatives joins them; and AND
+  // again where the causes of one alternative meet.
   for (const e of treeStyle() ? [] : l.edges) {
+    for (const a of e.ands || []) s += `<g class="junction scenario"><rect x="${a.x - 16}" y="${a.y - 8}" width="32" height="16" rx="8" fill="${C.panel}" stroke="${C.wire}" stroke-width="1.5"/><text x="${a.x}" y="${a.y + 3}" font-size="8.5" font-weight="800" letter-spacing="0.5" text-anchor="middle" fill="${C.junctionText}">AND</text></g>`;
     for (const o of e.ors || []) s += `<g class="junction or"><rect x="${o.x - 11}" y="${o.y - 8}" width="22" height="16" rx="8" fill="${C.panel}" stroke="${C.wire}" stroke-width="1.5" stroke-dasharray="3 2"/><text x="${o.x}" y="${o.y + 3}" font-size="8.5" font-weight="800" letter-spacing="0.5" text-anchor="middle" fill="${C.junctionText}">OR</text></g>`;
     if (!e.junction) continue;
     const {x, y} = e.junction;
@@ -2702,7 +2846,7 @@ function renderStyle() {
   $('addAction').title = tree ? 'Add a possible cause to the selected effect' : 'Add an action cause to the selected effect';
   $('keyHints').innerHTML = tree
     ? 'Type to rename · <kbd>Tab</kbd> cause · <kbd>Enter</kbd> sibling · <kbd>Alt+1</kbd> <kbd>2</kbd> <kbd>3</kbd> status · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete'
-    : 'Type to rename · <kbd>Tab</kbd> action · <kbd>Shift+Tab</kbd> condition · <kbd>Enter</kbd> sibling · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Alt+O</kbd> alternatives (OR) · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete';
+    : 'Type to rename · <kbd>Tab</kbd> action · <kbd>Shift+Tab</kbd> condition · <kbd>Enter</kbd> sibling · <kbd>Alt+L</kbd> link · <kbd>Alt+M</kbd> move · <kbd>Shift+↑↓</kbd> nudge · drag a box to select several · <kbd>Alt+G</kbd> summary · <kbd>Alt+O</kbd> alternatives (OR) · <kbd>Alt+Shift+O</kbd> one alternative · <kbd>Space</kbd> collapse · <kbd>←↑↓→</kbd> select · <kbd>Del</kbd> delete';
 }
 
 function renderTitle() {
@@ -2732,7 +2876,7 @@ function renderProperties() {
 // Several nodes selected with Ctrl+click: group them, set their status, or delete them.
 function renderSelectionProperties(box, ids) {
   const nodes = ids.map(byId), tree = treeStyle(), problem = summaryProblem(ids, layout.parent.get(selected)), causes = nodes.filter(isCause);
-  const orProblem = alternativesProblem(ids, layout.parent.get(selected));
+  const orProblem = alternativesProblem(ids, layout.parent.get(selected)), oneProblem = joinProblem(ids, layout.parent.get(selected));
   box.innerHTML = `
     <div class="kind-row"><span class="kind-chip action">${ids.length} SELECTED</span><span class="muted">Ctrl+click adds or takes out one</span></div>
     <ul class="cause-list">${nodes.map(n => `<li><button data-goto="${n.id}">${swatch(n)}${escapeHtml(n.title)}</button></li>`).join('')}</ul>
@@ -2744,9 +2888,12 @@ function renderSelectionProperties(box, ids) {
     </div>
     ${tree ? '' : `<div class="section">
       <div class="panel-title">Alternatives (OR)</div>
-      <p class="note" style="margin-top:0">One of them caused the effect, but the evidence cannot yet tell which. They are marked unverified until all but one are ruled out.</p>
-      <button class="button block" id="inspAlternatives" ${orProblem ? 'disabled' : ''} title="Alt+O">Make them alternatives</button>
-      ${orProblem ? `<p class="note">${escapeHtml(orProblem)}</p>` : ''}
+      <p class="note" style="margin-top:0">One explanation caused the effect, but the evidence cannot yet tell which. Make each of them an alternative, or make them together one alternative: an action and the condition it acted on, all needed (AND). Alternatives are unverified until all but one are ruled out.</p>
+      <div class="button-grid">
+        <button class="button" id="inspAlternatives" ${orProblem ? 'disabled' : ''} title="Each cause an alternative of its own (Alt+O)">Make them alternatives</button>
+        <button class="button" id="inspOneAlternative" ${oneProblem ? 'disabled' : ''} title="All of them one alternative, joined by AND (Alt+Shift+O)">Make them one alternative</button>
+      </div>
+      ${orProblem || oneProblem ? `<p class="note">${escapeHtml(orProblem || oneProblem)}</p>` : ''}
     </div>`}
     ${tree && causes.length ? `<div class="section"><div class="panel-title">Status of ${plural(causes.length, 'cause')}</div>
       <div class="segmented status" role="group" aria-label="Status">${Object.entries(STATUSES).map(([k, st], i) =>
@@ -2756,6 +2903,7 @@ function renderSelectionProperties(box, ids) {
   box.querySelectorAll('[data-status]').forEach(b => b.onclick = () => setNodeStatus(b.dataset.status));
   $('inspSummarise').onclick = summariseSelected;
   if ($('inspAlternatives')) $('inspAlternatives').onclick = alternativesSelected;
+  if ($('inspOneAlternative')) $('inspOneAlternative').onclick = joinSelected;
   if ($('inspDelete')) $('inspDelete').onclick = deleteSelected;
 }
 
@@ -2811,7 +2959,8 @@ function renderRcaProperties(box) {
         <dt><kbd>Alt+L</kbd></dt><dd>Link an existing node as a cause</dd>
         <dt>Drag on the canvas</dt><dd>Select the nodes in the box. <kbd>Ctrl+click</kbd> adds or takes out one</dd>
         <dt><kbd>Alt+G</kbd></dt><dd>Add a summary: one cause shared by the selected causes</dd>${tree ? '' : `
-        <dt><kbd>Alt+O</kbd></dt><dd>Make the selected causes alternatives (OR); on one of them, take it out</dd>`}
+        <dt><kbd>Alt+O</kbd></dt><dd>Make the selected causes alternatives (OR); on one of them, take it out</dd>
+        <dt><kbd>Alt+Shift+O</kbd></dt><dd>Make the selected causes one alternative (AND); on one node, add an alternative: an action and a condition</dd>`}
         <dt>Right-drag, wheel</dt><dd>Pan, zoom</dd>
         <dt><kbd>Space</kbd></dt><dd>Collapse or expand the branch</dd>
         <dt><kbd>Esc</kbd></dt><dd>Cancel linking, moving, or a drag; or clear the selection. In the title: undo what was typed</dd>
@@ -2838,7 +2987,7 @@ function renderNodeProperties(box, n) {
   const evidence = n.evidenceIds.map(evidenceById).filter(Boolean);
   const solutions = solutionsOf(n.id);
   const tree = treeStyle();
-  const alternatives = tree || isPrimary ? [] : alternativesOf(layout.parent.get(n.id), n.id);
+  const place = tree || isPrimary ? null : alternativePlace(layout.parent.get(n.id), n.id);
   const kindName = isPrimary ? 'Primary effect' : tree ? {possible: 'Hypothesis', confirmed: 'Confirmed cause', 'ruled-out': 'Ruled out'}[n.status] : KINDS[n.kind].name;
   const about = [causes.length && !isPrimary ? 'also an effect' : '', causes.length ? `${causes.length} cause${causes.length > 1 ? 's' : ''}` : '',
     layout.summaries.some(x => x.id === n.id) ? `summary of ${effects.length} causes` : effects.length > 1 ? `supports ${effects.length} effects` : ''].filter(Boolean).join(' · ');
@@ -2862,11 +3011,14 @@ function renderNodeProperties(box, n) {
     <div class="segmented cause-type" role="group" aria-label="Root cause type">${Object.entries(CAUSE_TYPES).map(([k, t]) =>
       `<button data-cause-type="${k}" ${pressed(n.causeType === k)} title="${t.about}${n.causeType === k ? '. Click again to clear' : ''}">${t.name}</button>`).join('')}</div>`}
     ${n.stopPoint ? `<label class="field" for="nodeStopReason">Why the branch stops</label><select class="text" id="nodeStopReason">${Object.entries(STOP_REASONS).map(([k, v]) => `<option value="${k}" ${n.stopPoint.reason === k ? 'selected' : ''}>${v}</option>`).join('')}</select>` : ''}
-    ${alternatives.length ? `<div class="section">
-      <div class="panel-title">Alternatives (OR) · one of ${alternatives.length + 1}</div>
-      <p class="note" style="margin-top:0">This or one of these caused the effect; the evidence must settle which.</p>
-      <ul class="cause-list">${alternatives.map(c => `<li><button data-goto="${c.id}">${swatch(c)}${escapeHtml(c.title)}</button></li>`).join('')}</ul>
-      <div class="button-grid">
+    ${place ? `<div class="section">
+      <div class="panel-title">Alternatives (OR) · one of ${place.group.scenarios.length}</div>
+      <p class="note" style="margin-top:0">${place.mine.length > 1 ? `This alternative is ${escapeHtml(scenarioName(place.mine))}, all needed together (AND). It` : 'This'} or one of these caused the effect; the evidence must settle which.</p>
+      <ul class="cause-list">${place.others.map(sc => `<li><button data-goto="${sc[0].id}">${swatch(sc[0])}${escapeHtml(scenarioName(sc))}</button></li>`).join('')}</ul>
+      <label class="field" for="nodeScenario">Part of</label>
+      <select class="text" id="nodeScenario">${place.group.scenarios.map((sc, i) => `<option value="${escapeHtml(place.group.keys[i])}" ${i === place.index ? 'selected' : ''}>Alternative ${i + 1}: ${escapeHtml(shorten(scenarioName(sc), 44))}</option>`).join('')}
+        ${place.mine.length > 1 ? '<option value="new">A new alternative of its own</option>' : ''}</select>
+      <div class="button-grid" style="margin-top:8px">
         <button class="button" id="inspKeep" title="Move the other alternatives to the causes ruled out">Keep this one</button>
         <button class="button" id="inspLeave" title="It was needed, with the other causes (AND) (Alt+O)">Not an alternative</button>
       </div>
@@ -2891,7 +3043,8 @@ function renderNodeProperties(box, n) {
       ${causes.length ? `<ul class="cause-list">${causes.map(c => `<li><button data-goto="${c.id}">${swatch(c)}${escapeHtml(c.title)}</button></li>`).join('')}</ul>` : '<p class="note" style="margin-top:0">No causes yet.</p>'}
       <div class="button-grid">
         ${tree ? '<button class="button" id="inspAddAction" title="Insert, Tab, or Alt+A">+ Cause</button>' : `<button class="button" id="inspAddAction" title="Insert, Tab, or Alt+A">+ Action</button>
-        <button class="button" id="inspAddCondition" title="Shift+Insert, Shift+Tab, or Alt+C">+ Condition</button>`}
+        <button class="button" id="inspAddCondition" title="Shift+Insert, Shift+Tab, or Alt+C">+ Condition</button>
+        <button class="button" id="inspAddScenario" title="Another explanation, an action and a condition, joined by OR with ${causes.length ? 'the causes there now' : 'a first one'} (Alt+Shift+O)">+ Alternative (OR)</button>`}
         <button class="button" id="inspLink" title="Link a node already on the chart as a further cause (Alt+L)">Link existing</button>
         ${causes.length ? `<button class="button" id="inspCollapse" title="Space">${collapsed.has(n.id) ? 'Expand branch' : 'Collapse branch'}</button>` : ''}
         <button class="button" id="inspCopy" title="Copy this node and every cause under it (Ctrl+C)">Copy branch</button>
@@ -2935,6 +3088,8 @@ function renderNodeProperties(box, n) {
     if (n.title !== titleBefore) restoreHistory(); else e.target.blur();
   };
   if ($('inspKeep')) $('inspKeep').onclick = keepAlternative;
+  if ($('nodeScenario')) $('nodeScenario').onchange = e => moveScenarioSelected(e.target.value);
+  if ($('inspAddScenario')) $('inspAddScenario').onclick = () => addScenarioToSelected();
   if ($('inspLeave')) $('inspLeave').onclick = alternativesSelected;
   if ($('nodeTest')) $('nodeTest').oninput = e => { n.test = e.target.value; persist('test:' + n.id); };
   box.querySelectorAll('[data-status]').forEach(b => b.onclick = () => setNodeStatus(b.dataset.status));
@@ -3138,6 +3293,8 @@ function addSiblingToSelected() {
   if (!effectId) { setStatus('The primary effect has no siblings: Tab adds a cause'); return; }
   const sibling = addCause(effectId, ['action', 'condition'].includes(n.kind) ? n.kind : 'action');
   placeCause(effectId, sibling.id, n.id, true);
+  // Beside a cause of an alternative (OR), it joins that alternative.
+  joinSibling(effectId, sibling.id, n.id);
   addedCause(sibling, false);
 }
 // A further problem: a second primary effect, with its own tree, in the same investigation; its title ready to type.
@@ -3199,7 +3356,7 @@ function selectMany(ids) {
   picked = new Set(ids.length > 1 ? ids : []);
   selected = ids.at(-1) ?? null;
   render();
-  if (picked.size > 1) setStatus(`${plural(picked.size, 'node')} selected${summaryProblem(ids, layout.parent.get(selected)) ? '' : ': Alt+G gives them a summary'}${alternativesProblem(ids, layout.parent.get(selected)) ? '' : ', Alt+O makes them alternatives (OR)'}`);
+  if (picked.size > 1) setStatus(`${plural(picked.size, 'node')} selected${summaryProblem(ids, layout.parent.get(selected)) ? '' : ': Alt+G gives them a summary'}${alternativesProblem(ids, layout.parent.get(selected)) ? '' : ', Alt+O makes them alternatives (OR), Alt+Shift+O one alternative'}`);
 }
 function togglePicked(id) {
   const ids = selection();
@@ -3259,15 +3416,47 @@ function alternativesSelected() {
   render(); persist();
   setStatus(`${plural(ids.length, 'alternative')} (OR), marked unverified: test them, and rule out all but one`);
 }
+// Keep this one: the cause's alternative stays, and the causes of the others are ruled out.
 function keepAlternative() {
-  const n = byId(selected), effectId = layout.parent.get(selected), others = alternativesOf(effectId, selected);
-  if (!n || !others.length) return;
-  const ids = deletionSet(...others.map(c => c.id)), more = ids.length - others.length;
-  if (!confirm(`Keep "${n.title}" and move ${others.length === 1 ? `"${others[0].title}"` : plural(others.length, 'alternative')} to the causes ruled out?${more ? ` The ${plural(more, 'cause')} that only they support will be deleted.` : ''}`)) return;
+  const n = byId(selected), effectId = layout.parent.get(selected), place = n && alternativePlace(effectId, selected);
+  if (!place) return;
+  const others = place.others.flat(), ids = deletionSet(...others.map(c => c.id)), more = ids.length - others.length;
+  const what = place.others.length === 1 ? `"${scenarioName(place.others[0])}"` : plural(place.others.length, 'alternative');
+  if (!confirm(`Keep "${scenarioName(place.mine)}" and move ${what} to the causes ruled out?${more ? ` The ${plural(more, 'cause')} that only they support will be deleted.` : ''}`)) return;
   for (const c of others) toRuledOut(c);
   deleteNodes(ids);
   render(); persist();
-  setStatus(`Kept "${n.title}": ${plural(others.length, 'alternative')} moved to the causes ruled out`);
+  setStatus(`Kept "${scenarioName(place.mine)}": ${plural(others.length, 'cause')} of the other ${place.others.length === 1 ? 'alternative' : 'alternatives'} moved to the causes ruled out`);
+}
+// Alt+Shift+O: a new alternative explanation of the selected node, an action and a condition, joined by
+// OR with its other alternatives. With none yet, its causes become the first.
+function addScenarioToSelected(edit = true) {
+  const n = byId(selected);
+  if (!n) return;
+  if (treeStyle()) { setStatus('In a cause tree every branch is an alternative already: + Cause adds one'); return; }
+  const had = causesOf(n.id).length, grouped = orGroupsOf(n.id).length;
+  const action = addScenario(n.id);
+  picked.clear();
+  addedCause(action, edit);
+  setStatus(grouped ? 'Added an alternative (OR): an action and a condition, both unverified. Name them'
+    : had ? `The ${plural(had, 'cause')} of "${n.title}" are now one alternative, and a second is added: an action and a condition (OR). Name them`
+    : 'Added two alternatives (OR), each an action and a condition, all unverified. Name them');
+}
+// The selected causes of one effect become one alternative: all needed together (AND).
+function joinSelected() {
+  const ids = selection(), effectId = layout.parent.get(selected), problem = joinProblem(ids, effectId);
+  if (problem) { setStatus(problem); return; }
+  const action = joinScenario(ids, effectId);
+  if (action) { picked.clear(); addedCause(action, true); }
+  else { render(); persist(); }
+  setStatus(action ? `${plural(ids.length, 'cause')} made one alternative; a second alternative is added (OR): name its action and condition`
+    : `${plural(ids.length, 'cause')} made one alternative (AND), unverified until the evidence settles it`);
+}
+function moveScenarioSelected(key) {
+  const effectId = layout.parent.get(selected);
+  moveToScenario(effectId, selected, key);
+  render(); persist();
+  setStatus(key === 'new' ? 'Now an alternative of its own' : 'Moved to that alternative');
 }
 
 // A cause tree: Alt+1, Alt+2, and Alt+3 set the status of the selected causes. A confirmed cause happened,
@@ -3697,6 +3886,8 @@ window.addEventListener('keydown', e => {
     else if (code === 'm' && !e.shiftKey) { e.preventDefault(); startMoving(); }
     else if (code === 'g' && !e.shiftKey) { e.preventDefault(); summariseSelected(); }
     else if (code === 'o' && !e.shiftKey) { e.preventDefault(); alternativesSelected(); }
+    // Alt+Shift+O: on several causes, they become one alternative; on one node, it gets a new alternative.
+    else if (code === 'o') { e.preventDefault(); if (selection().length > 1) joinSelected(); else addScenarioToSelected(false); }
     return;
   }
   // Tab or Insert adds a cause of the selected node: an action, or with Shift a condition; in a cause
@@ -3885,8 +4076,9 @@ function normalizeProject(p) {
   state = {...s, links: []};
   try {
     for (const l of p.links) if (byId(l?.effectId) && byId(l?.causeId) && !linkProblem(l.effectId, l.causeId))
-      state.links.push({id: l.id || uuid(), effectId: l.effectId, causeId: l.causeId, ...typeof l.orGroup === 'string' && l.orGroup && {orGroup: l.orGroup}});
-    // A group of alternatives with one cause left is none.
+      state.links.push({id: l.id || uuid(), effectId: l.effectId, causeId: l.causeId, ...typeof l.orGroup === 'string' && l.orGroup && {orGroup: l.orGroup},
+        ...typeof l.orGroup === 'string' && l.orGroup && typeof l.scenario === 'string' && l.scenario && {scenario: l.scenario}});
+    // A group of alternatives with one alternative left is none.
     tidyOrGroups();
     return {...state};
   } finally { state = previous; }
@@ -5487,10 +5679,10 @@ function chartFigures() {
   const cw = b.r - b.l + 2 * CHART_PAD, ch = b.b - b.t + 2 * CHART_PAD;
   const fit = Math.min(1, PRINT_W / cw, PRINT_H / ch);
   if (fit >= PRINT_MIN_SCALE) return [`<figure>${chartSvg(l, {heading: false, scale: fit})}</figure>`];
-  const s = PRINT_MIN_SCALE, column = NODE_W + COL_GAP;
+  const s = PRINT_MIN_SCALE, column = NODE_W + l.gap;
   const perTile = Math.max(1, Math.floor((PRINT_W / s - 2 * CHART_PAD) / column));
   const tileW = perTile * column, tileH = PRINT_H / s;
-  const cols = Math.ceil((b.r - b.l + COL_GAP) / tileW), rows = Math.ceil(ch / tileH);
+  const cols = Math.ceil((b.r - b.l + l.gap) / tileW), rows = Math.ceil(ch / tileH);
   const figures = [];
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
     const area = {x: b.l - CHART_PAD + c * tileW, y: b.t - CHART_PAD + r * tileH, w: tileW + (c === cols - 1 ? 2 * CHART_PAD : CHART_PAD), h: Math.min(tileH, ch - r * tileH)};
@@ -5535,8 +5727,8 @@ function rootCauses() {
 }
 // A root cause that is one of alternatives not yet settled says so, with the others.
 function orNote(n) {
-  const effect = effectsOf(n.id).find(e => alternativesOf(e.id, n.id).length);
-  return effect ? `One of: ${[n, ...alternativesOf(effect.id, n.id)].map(c => c.title).join(' / ')} (being tested)` : '';
+  const place = effectsOf(n.id).map(e => alternativePlace(e.id, n.id)).find(Boolean);
+  return place ? `One of: ${place.group.scenarios.map(scenarioName).join(' / ')} (being tested)` : '';
 }
 // A cause's chain up to the primary effect, along its first effect.
 function causeChain(n) {
@@ -5584,7 +5776,7 @@ function fullReport() {
       <h2>${treeStyle() ? 'Cause tree' : 'Cause-and-effect chart'}</h2>
       <p class="r-legend">${treeStyle()
         ? 'Read left to right: each effect, then its possible causes. Red: primary effect. Solid teal, with a bold link: confirmed. White, dashed, H: hypothesis, still to test. Grey, RULED OUT, ✕: ruled out. E-codes: evidence. Orange badge: no evidence. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'
-        : 'Read left to right: each effect, then the causes that were all needed for it (AND). OR, dashed: alternatives, one of which was needed, still to settle. Red: primary effect. Dark: action. Light: condition. E-codes: evidence. ?: no evidence or unverified. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'}</p>
+        : 'Read left to right: each effect, then the causes that were all needed for it (AND). OR, dashed: alternatives, one of which was needed, still to settle; the causes of one alternative are joined by their own AND. Red: primary effect. Dark: action. Light: condition. E-codes: evidence. ?: no evidence or unverified. Double bar and STOP: stop point. OCCURRENCE, ESCAPE, SYSTEMIC on the top line: root cause type. Dashed purple: a further link of a shared cause.'}</p>
       ${chartFigures().join('')}
       ${issues.length ? `<h3>Open rule issues</h3><ul>${issues.map(i => `<li class="${i.level === 'error' ? 'r-issue-error' : ''}">${escapeHtml(issueTitle(i))}: ${escapeHtml(i.text)}</li>`).join('')}</ul>` : ''}
     </section>
@@ -6351,10 +6543,12 @@ const GUIDES = {
       'Where one cause supports several effects, <b>Link cause</b> (<kbd>Alt+L</kbd>) draws the second link.',
       'End each branch with a <b>stop point</b> and its reason. Tick <b>Controllable</b> on causes you can change, and give root causes their <b>type</b>: occurrence, escape point, or systemic.',
       'Rule out what the evidence disproves with <b>Rule out</b>; it moves to the causes ruled out.',
-      'When the evidence cannot yet tell which of some causes it was, select them and press <kbd>Alt+O</kbd>: they become <b>alternatives</b>, joined by a dashed <b>OR</b>. Test them, then choose <b>Keep this one</b> on the cause the evidence confirms; the others are ruled out.',
+      'When the evidence cannot yet tell which explanation it was, chart the explanations as <b>alternatives</b>, joined by a dashed <b>OR</b>. Each alternative is a whole explanation: an action and the condition it acted on, joined by their own <b>AND</b>. Select the effect and choose <b>+ Alternative (OR)</b> (<kbd>Alt+Shift+O</kbd>): its causes become the first alternative, and a second, an action and a condition, is added to name. <kbd>Enter</kbd> beside a cause of an alternative adds another cause to it.',
+      'Or select causes of one effect and press <kbd>Alt+O</kbd> to make each an alternative of its own, or <kbd>Alt+Shift+O</kbd> to make them together one alternative. Test the alternatives, then choose <b>Keep this one</b> on a cause of the one the evidence confirms; the causes of the others are ruled out.',
     ],
     tips: [
       'An effect with only an action, or only a condition, is incomplete: the chart outlines it.',
+      'Do not put an OR between two actions and another OR between two conditions: that allows every mix of them, most of which explain nothing. Pair each action with its condition as one alternative.',
       'A branch that ends at a human error is not done: ask why the error was possible.',
       'Look for all three root cause types: why it happened, why it was not caught, and what in the system allowed it.',
       'The issues button lists everything the chart still needs.',
