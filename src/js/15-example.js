@@ -102,12 +102,14 @@ function exampleRca() {
   ];
   const action = (text, sol, kind, strength, owner, due, verification, check, status = 'open') =>
     ({id: uuid(), action: text, solutionId: sol === null ? '' : s.solutions[sol].id, kind, strength, owner, due, verification, status, effectiveness: {date: check, result: ''}});
+  // Dates still to come are counted from today, so the example never turns overdue.
+  const inDays = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
   s.actions = [
-    action('Run on P-101B, with its flush strainer cleaned and checked every shift until the cyclone is in', null, 'containment', '', 'R. Haddad', '2026-09-15', 'Shift log of strainer checks', '2026-12-31', 'verified'),
-    action('Engineer and install cyclone separator on P-101A/B flush', 0, 'corrective', 'strong', 'S. Varga', '2026-12-15', 'Installation check and flush flow test', '2027-06-15'),
-    action('Add a seal-system walkdown checklist to upset procedure OP-212', 1, 'corrective', 'medium', 'K. Osei', '2026-11-15', 'Procedure review and a field audit after the next upset', '2027-05-15'),
-    action('Add vapour-pressure margin step to the seal selection checklist', 2, 'preventive', 'medium', 'L. Moreau', '2026-11-01', 'Checklist audit on the next three selections', '2027-05-01', 'in-progress'),
-    action('Configure TI-104 high alarm at 85 °C', 3, 'corrective', 'medium', 'R. Haddad', '2026-10-31', 'Alarm test from the DCS', '2027-04-30', 'implemented'),
+    action('Run on P-101B, with its flush strainer cleaned and checked every shift until the cyclone is in', null, 'containment', '', 'R. Haddad', '2026-09-15', 'Shift log of strainer checks', inDays(60), 'verified'),
+    action('Engineer and install cyclone separator on P-101A/B flush', 0, 'corrective', 'strong', 'S. Varga', inDays(40), 'Installation check and flush flow test', inDays(220)),
+    action('Add a seal-system walkdown checklist to upset procedure OP-212', 1, 'corrective', 'medium', 'K. Osei', inDays(10), 'Procedure review and a field audit after the next upset', inDays(190)),
+    action('Add vapour-pressure margin step to the seal selection checklist', 2, 'preventive', 'medium', 'L. Moreau', inDays(14), 'Checklist audit on the next three selections', inDays(194), 'in-progress'),
+    action('Configure TI-104 high alarm at 85 °C', 3, 'corrective', 'medium', 'R. Haddad', '2026-10-31', 'Alarm test from the DCS', inDays(180), 'implemented'),
   ];
   s.equipment = {
     machine: 'Centrifugal pump, overhung, API 610 OH2', machineModel: 'P-101A, 3x4-10, 37 kW',
